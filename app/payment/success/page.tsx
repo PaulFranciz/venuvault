@@ -36,7 +36,7 @@ export default function PaymentSuccessPage() {
           Transaction Reference: {transactionRef}
         </p>
       )}
-      <Link href="/dashboard/tickets">
+      <Link href="/tickets">
         <Button size="lg">View My Tickets</Button>
       </Link>
       <Link href="/">
