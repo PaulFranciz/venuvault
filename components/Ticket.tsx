@@ -15,6 +15,18 @@ import Spinner from "./Spinner";
 import { useStorageUrl } from "@/lib/utils";
 import Image from "next/image";
 
+// Function to generate the validation URL
+function getValidationUrl(ticketId: Id<"tickets">): string {
+    // Ensure NEXT_PUBLIC_APP_URL is available in the environment
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!baseUrl) {
+        console.error("NEXT_PUBLIC_APP_URL environment variable is not set.");
+        // Return a fallback or throw an error? For QR, maybe return ticketId itself
+        return ticketId; 
+    }
+    return `${baseUrl}/validate-ticket/${ticketId}`;
+}
+
 export default function Ticket({ ticketId }: { ticketId: Id<"tickets"> }) {
   const ticket = useQuery(api.tickets.getTicketWithDetails, { ticketId });
   const user = useQuery(api.users.getUserById, {
@@ -25,6 +37,9 @@ export default function Ticket({ ticketId }: { ticketId: Id<"tickets"> }) {
   if (!ticket || !ticket.event || !user) {
     return <Spinner />;
   }
+
+  // Generate the URL for the QR code
+  const qrCodeValue = getValidationUrl(ticket._id);
 
   return (
     <div
@@ -122,7 +137,7 @@ export default function Ticket({ ticketId }: { ticketId: Id<"tickets"> }) {
             <div
               className={`bg-gray-100 p-4 rounded-lg ${ticket.event.is_cancelled ? "opacity-50" : ""}`}
             >
-              <QRCode value={ticket._id} className="w-32 h-32" />
+              <QRCode value={qrCodeValue} className="w-32 h-32" />
             </div>
             <p className="mt-2 text-sm text-gray-500 break-all text-center max-w-[200px] md:max-w-full">
               Ticket ID: {ticket._id}

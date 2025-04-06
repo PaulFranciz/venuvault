@@ -3,7 +3,6 @@
 import { initializePaystackTransaction } from "@/app/actions/initializePaystackTransaction";
 import { Id } from "@/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
@@ -11,7 +10,6 @@ import ReleaseTicket from "./ReleaseTicket";
 import { Ticket } from "lucide-react";
 
 export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
-  const router = useRouter();
   const { user } = useUser();
   const queuePosition = useQuery(api.waitingList.getQueuePosition, {
     eventId,

@@ -18,12 +18,11 @@ const convex = getConvexClient();
 
 // Structure for successful refund data (optional, for logging/checking)
 interface PaystackRefundData {
-    // Fields returned by Paystack on successful refund
     status: boolean;
     message: string;
     data?: {
-        transaction: any; // Transaction object
-        refund: any; // Refund object
+        transaction: Record<string, unknown>; // Use Record<string, unknown> instead of any
+        refund: Record<string, unknown>; // Use Record<string, unknown> instead of any
     }
 }
 
@@ -34,12 +33,6 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
   // Get event details (needed for seller user ID)
   const event = await convex.query(api.events.getById, { eventId });
   if (!event) throw new Error(`Event not found: ${eventId}`);
-
-  // Get seller's subaccount code - needed for context, though Paystack refund API doesn't strictly require it
-  const sellerSubaccountId = await convex.query(
-    api.users.getUsersPaystackSubaccountId,
-    { userId: event.userId }
-  );
 
   // Get all 'valid' or 'used' tickets for this event that have a Paystack reference
   const ticketsToRefund = await convex.query(api.tickets.getValidTicketsForEvent, {
@@ -85,7 +78,7 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
 
          console.log(`Fetch Refund Status Code for Ref ${ticket.paystackReference}:`, response.status);
 
-         let responseData: PaystackRefundData | any; // Use any for potential error structures
+         let responseData: PaystackRefundData | { message?: string, status?: boolean }; // Type for success or error shape
          try {
              responseData = await response.json();
          } catch (parseError) {
@@ -115,9 +108,11 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
         });
          console.log(`Updated ticket ${ticket._id} status to refunded in Convex.`);
 
-        return { success: true, ticketId: ticket._id, refundData: responseData.data }; // Return success and optional data
+        // Only try to access .data if responseData actually contains it (implies success)
+        const refundData = 'data' in responseData ? responseData.data : undefined;
+        return { success: true, ticketId: ticket._id, refundData: refundData };
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Catch fetch/parsing errors or errors thrown from checks
         console.error(`Failed to process refund for ticket ${ticket._id} (Ref: ${ticket.paystackReference}):`, error);
          let errorMessage = "Unknown refund processing error";

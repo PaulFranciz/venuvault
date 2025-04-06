@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation"; // Keep if navigation is needed elsewhere
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
@@ -317,37 +316,37 @@ export default function SellerDashboard() {
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-8">
-      {/* Header Section */}
+        {/* Header Section */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-8 text-white rounded-lg shadow-md">
-        <h2 className="text-2xl font-bold">Seller Dashboard</h2>
-        <p className="text-blue-100 mt-2">
+          <h2 className="text-2xl font-bold">Seller Dashboard</h2>
+          <p className="text-blue-100 mt-2">
           Manage your events and payout settings
-        </p>
-      </div>
+          </p>
+        </div>
 
        {/* Create/View Events Section (Show only if ready) */}
-       {isReadyToAcceptPayments && (
+        {isReadyToAcceptPayments && (
            <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
              <h3 className="text-xl font-semibold text-gray-900 mb-4">
                Manage Your Events
              </h3>
              <div className="flex flex-col sm:flex-row justify-center gap-4">
-               <Link
-                 href="/seller/new-event"
+                  <Link
+                    href="/seller/new-event"
                  className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-               >
-                 <Plus className="w-5 h-5" />
+                  >
+                    <Plus className="w-5 h-5" />
                  Create New Event
-               </Link>
-               <Link
-                 href="/seller/events"
+                  </Link>
+                  <Link
+                    href="/seller/events"
                  className="flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
-               >
-                 <CalendarDays className="w-5 h-5" />
-                 View My Events
-               </Link>
-             </div>
-           </div>
+                  >
+                    <CalendarDays className="w-5 h-5" />
+                    View My Events
+                  </Link>
+                </div>
+              </div>
        )}
 
       {/* Payout Setup / Status Section */}

@@ -24,7 +24,7 @@ interface PaystackSubaccountData {
     primary_contact_name: string | null;
     primary_contact_email: string | null;
     primary_contact_phone: string | null;
-    metadata: any | null;
+    metadata: Record<string, unknown> | null;
     percentage_charge: number;
     is_verified: boolean;
     settlement_bank: string; // e.g., "Guaranty Trust Bank"
@@ -96,8 +96,15 @@ export async function getPaystackSubaccountStatus(): Promise<PaystackAccountStat
 
 
     if (!response.ok) {
-        console.error("Paystack API get subaccount request failed:", { status: response.status, body: responseData });
-        throw new Error(`Paystack API Error (${response.status}): ${responseData?.message || response.statusText}`);
+       let errorBody: { message?: string } = {};
+       try {
+            errorBody = await response.json();
+       } catch (parseError) {
+            console.error("Could not parse error response body:", parseError);
+       }
+        console.error("Paystack API get subaccount request failed:", { status: response.status, body: errorBody });
+        // Use message safely
+        throw new Error(`Paystack API Error (${response.status}): ${errorBody?.message || response.statusText}`);
     }
 
     if (!responseData || !responseData.status || !responseData.data) {
@@ -118,7 +125,7 @@ export async function getPaystackSubaccountStatus(): Promise<PaystackAccountStat
       message: !hasBankDetails ? "Bank details might be missing or incomplete." : (isActive ? undefined : "Account may be inactive."),
     };
 
-  } catch (error: any) {
+  } catch (error: unknown) {
      console.error(`Error fetching Paystack subaccount status for code ${subaccountCode} via fetch:`, error);
      let errorMessage = "Failed to fetch Paystack subaccount status";
        if (error instanceof Error) {

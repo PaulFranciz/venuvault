@@ -106,13 +106,14 @@ export async function createOrUpdatePaystackSubaccount({
 
     return { subaccountCode };
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Catch fetch errors or errors thrown from checks/parsing
     console.error("Error during Paystack subaccount creation fetch/processing:", error);
     let errorMessage = "Failed to create Paystack subaccount.";
      if (error instanceof Error) {
          errorMessage = error.message;
      }
-    throw new Error(`Subaccount Creation Failed: ${errorMessage}`);
+    // If it's specifically a Paystack API error from our checks, the message is already included
+    throw new Error(errorMessage); // Throw the determined message
   }
 }

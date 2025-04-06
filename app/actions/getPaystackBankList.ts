@@ -47,14 +47,15 @@ export async function getPaystackBankList(): Promise<PaystackBank[]> {
 
     if (!response.ok) {
        // Attempt to parse error body from Paystack if possible
-       let errorBody = {};
+       let errorBody: { message?: string } = {}; // Give errorBody a potential shape
        try {
             errorBody = await response.json();
        } catch (parseError) {
             console.error("Could not parse error response body:", parseError);
        }
       console.error("Paystack API request failed:", { status: response.status, statusText: response.statusText, body: errorBody });
-      throw new Error(`Paystack API Error (${response.status}): ${ (errorBody as any)?.message || response.statusText}`);
+      // Use message from parsed body safely
+      throw new Error(`Paystack API Error (${response.status}): ${ errorBody?.message || response.statusText}`);
     }
 
     // Parse the successful JSON response
@@ -86,7 +87,7 @@ export async function getPaystackBankList(): Promise<PaystackBank[]> {
 
     return activeBanks;
 
-  } catch (error: any) {
+  } catch (error: unknown) { // Changed from any
     // Catch fetch errors or errors thrown from response checks
      console.error("Error in getPaystackBankList catch block:", error);
      let errorMessage = "Failed to fetch bank list";

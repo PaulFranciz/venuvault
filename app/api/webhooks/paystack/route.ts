@@ -4,9 +4,9 @@ import { api } from "@/convex/_generated/api";
 import crypto from "crypto";
 import { PaystackMetadata } from "@/app/actions/initializePaystackTransaction";
 
-// Define expected Paystack event structure (adjust based on Paystack docs if needed)
-interface PaystackEvent<T = any> {
-  event: string; // e.g., "charge.success"
+// Define expected Paystack event structure
+interface PaystackEvent<T = Record<string, unknown>> { // Default data to Record
+  event: string;
   data: T;
 }
 
@@ -24,9 +24,9 @@ interface PaystackChargeData {
   currency: string;
   ip_address: string;
   metadata: string; // The stringified metadata we sent
-  log: any; // Or define a more specific type if needed
+  log: Record<string, unknown> | null; // Use Record
   fees: number | null;
-  fees_split: any; // Or define a more specific type if needed
+  fees_split: Record<string, unknown> | null; // Use Record
   authorization: {
     authorization_code: string;
     bin: string;
@@ -49,16 +49,18 @@ interface PaystackChargeData {
     email: string;
     customer_code: string;
     phone: string | null;
-    metadata: any; // Or define a more specific type if needed
+    metadata: Record<string, unknown> | null; // Use Record
     risk_action: string;
     international_format_phone: string | null;
   };
-  plan: any; // Or define a more specific type if needed
+  plan: Record<string, unknown> | null; // Use Record
   subaccount: {
       subaccount_code: string;
-      // other subaccount fields if present
+      // Define other subaccount fields if needed, or use Record
+      [key: string]: unknown; // Allow other unknown fields
   };
-  // other potential fields
+  // Allow other unknown top-level fields
+  [key: string]: unknown;
 }
 
 export async function POST(req: Request) {
@@ -93,17 +95,17 @@ export async function POST(req: Request) {
       return new Response("Webhook Error: Invalid signature", { status: 400 });
     }
     console.log("Webhook signature verified successfully.");
-  } catch (err) {
+  } catch (err: unknown) { // Changed from any
     console.error("Webhook signature verification failed:", err);
-    return new Response(`Webhook Error: ${(err as Error).message}`, {
+    return new Response(`Webhook Error: ${err instanceof Error ? err.message : 'Unknown verification error'}`, {
       status: 400,
     });
   }
 
   let event: PaystackEvent<PaystackChargeData>;
    try {
-     event = JSON.parse(body); // Parse the validated body
-   } catch (err) {
+     event = JSON.parse(body);
+   } catch (err: unknown) { // Changed from any
      console.error("Webhook Error: Failed to parse JSON body:", err);
      return new Response("Webhook Error: Invalid JSON payload", { status: 400 });
    }
@@ -130,16 +132,13 @@ export async function POST(req: Request) {
            metadata = JSON.parse(chargeData.metadata);
            console.log("Parsed metadata:", metadata);
          } else if (typeof chargeData.metadata === 'object' && chargeData.metadata !== null) {
-            // Sometimes Paystack might send it pre-parsed or custom via dashboard test
-             metadata = chargeData.metadata as any;
-             console.warn("Received pre-parsed object metadata (unexpected for standard API calls):", metadata);
+             // Allow object metadata but ensure it fits the type
+             metadata = chargeData.metadata as PaystackMetadata;
+             console.warn("Received pre-parsed object metadata:", metadata);
          }
           else {
              console.error("Webhook Error: Missing or invalid metadata in charge data.");
-             // Decide how critical missing metadata is. If essential, return 500.
-             // If potentially recoverable (e.g., lookup by reference), log and continue/return 200.
-             // Returning 500 for now as metadata is crucial for linking.
-             return new Response("Webhook Error: Missing or invalid metadata", { status: 400 }); // Bad request due to missing link info
+             return new Response("Webhook Error: Missing or invalid metadata", { status: 400 });
          }
 
          // Basic validation of metadata fields
@@ -148,9 +147,9 @@ export async function POST(req: Request) {
               return new Response("Webhook Error: Incomplete metadata", { status: 400 });
          }
 
-    } catch (err) {
+    } catch (err: unknown) { // Changed from any
         console.error("Webhook Error: Failed to parse metadata JSON:", err);
-        console.error("Received metadata string:", chargeData.metadata);
+        console.error("Received metadata string/object:", chargeData.metadata);
         return new Response("Webhook Error: Invalid metadata format", { status: 400 });
     }
 
@@ -176,11 +175,9 @@ export async function POST(req: Request) {
         },
       });
       console.log("Convex purchaseTicket mutation completed:", result);
-    } catch (error) {
+    } catch (error: unknown) { // Changed from any
       console.error("Error calling Convex purchaseTicket mutation:", error);
-      // If the mutation fails, should we retry? Or return 500?
-      // Returning 500 tells Paystack to retry the webhook later.
-      return new Response("Webhook Error: Failed to update database", { status: 500 });
+      return new Response(`Webhook Error: ${error instanceof Error ? error.message : 'Failed to update database'}`, { status: 500 }); // Return specific message
     }
   } else {
       console.log(`Received unhandled Paystack event type: ${event.event}`);

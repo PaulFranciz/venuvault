@@ -77,7 +77,7 @@ export async function initializePaystackTransaction({
 
   const amountInKobo = Math.round(event.price * 100);
   const cancelUrl = `${baseUrl}/event/${eventId}`;
-  const callbackUrl = `${baseUrl}/api/webhooks/paystack`;
+  const callbackUrl = `${baseUrl}/payment/success`;
 
   const metadata: PaystackMetadata = {
     eventId,
@@ -139,7 +139,7 @@ export async function initializePaystackTransaction({
       reference: data.reference,
     };
 
-  } catch (error: any) {
+  } catch (error: unknown) {
      console.error("Error during Paystack transaction initialization fetch/processing:", error);
      let errorMessage = "Failed to initialize Paystack transaction.";
       if (error instanceof Error) {

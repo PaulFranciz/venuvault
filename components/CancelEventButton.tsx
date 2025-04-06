@@ -35,12 +35,12 @@ export default function CancelEventButton({
       });
       router.refresh();
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to cancel event:", error);
       toast({
         variant: "destructive",
         title: "Cancellation Error",
-        description: error?.message || "Failed to cancel event. Check logs or Paystack dashboard.",
+        description: error instanceof Error ? error.message : "Failed to cancel event. Check logs or Paystack dashboard.",
       });
     } finally {
       setIsCancelling(false);

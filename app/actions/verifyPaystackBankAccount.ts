@@ -94,7 +94,7 @@ export async function verifyPaystackBankAccount(
         console.log(`Verification successful. Account Name: ${data.account_name}`);
         return { success: true, accountName: data.account_name };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         // Catch fetch errors or errors thrown from response checks/parsing
         console.error("Error during Paystack verification fetch/processing:", error);
         let errorMessage = "Failed to verify bank account details due to a server error.";
