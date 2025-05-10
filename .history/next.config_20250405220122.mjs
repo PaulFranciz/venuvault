@@ -35,12 +35,6 @@ const nextConfig = {
         port: '',
         pathname: '/api/storage/**', // Allow images specifically from Convex storage API path
       },
-      {
-        protocol: 'https',
-        hostname: 'silent-mallard-468.convex.cloud',
-        port: '',
-        pathname: '/api/storage/**',
-      },
       // Add other domains if needed
     ],
   },
