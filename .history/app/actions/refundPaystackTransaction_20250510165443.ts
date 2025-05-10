@@ -59,28 +59,10 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
         // OR: throw new Error(`Ticket ${ticket._id} is missing Paystack reference.`);
       }
 
-      // CRITICAL TODO: The currency for the refund MUST match the original transaction's currency.
-      // 1. Store 'currency' (e.g., "NGN", "GBP") with each ticket in Convex 'tickets' table
-      //    (get it from `chargeData.currency` in the Paystack webhook and pass to `purchaseTicket` mutation).
-      // 2. Ensure your Convex query `api.tickets.getValidTicketsForEvent` returns this 'currency' field for each ticket.
-      // 3. The logic below attempts to use `ticket.currency` and defaults to "NGN".
-      //    This "NGN" default WILL BE INCORRECT for past transactions in other currencies (e.g., your £240 GBP transaction)
-      //    until `ticket.currency` is correctly populated and retrieved for ALL tickets.
-
-      // Assert ticket type for currency property if not formally typed yet
-      // Replace `(ticket as any).currency` with `ticket.currency` once the type definition for tickets fetched by 
-      // `api.tickets.getValidTicketsForEvent` includes the `currency` field.
-      const ticketFromDb = ticket as any; // Temporary type assertion
-      let determinedTicketCurrency = ticketFromDb.currency;
-
-      if (!determinedTicketCurrency) {
-          determinedTicketCurrency = "NGN"; // Default to NGN if currency is not on the ticket object
-          console.warn(`Ticket ${ticket._id} (Ref: ${ticket.paystackReference}) is MISSING currency information from the database. Defaulting refund currency to '${determinedTicketCurrency}'. This may be INCORRECT for non-NGN past transactions.`);
-      } else {
-          console.log(`Using currency '${determinedTicketCurrency}' from ticket object for refund of ticket ${ticket._id} (Ref: ${ticket.paystackReference}).`);
-      }
-      
-      const ticketCurrency = determinedTicketCurrency; // Use the determined currency
+      // Assuming ticket.amount is in the main currency unit (e.g., pounds)
+      // TODO: Ensure ticket.currency is available, for now, we'll assume 'GBP' as an example for the £240 transaction.
+      // If your tickets can be in different currencies, you MUST fetch/store and use the correct ticket.currency.
+      const ticketCurrency = "GBP"; // IMPORTANT: Replace with actual ticket.currency if available
       const ticketAmountInSmallestUnit = ticket.amount ? ticket.amount * 100 : undefined;
 
       if (ticketAmountInSmallestUnit === undefined) {

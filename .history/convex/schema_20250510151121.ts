@@ -25,7 +25,6 @@ export default defineSchema({
     ),
     paystackReference: v.optional(v.string()),
     amount: v.optional(v.number()),
-    currency: v.optional(v.string()),
   })
     .index("by_event", ["eventId"])
     .index("by_user", ["userId"])

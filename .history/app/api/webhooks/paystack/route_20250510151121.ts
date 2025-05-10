@@ -172,7 +172,6 @@ export async function POST(req: Request) {
         paymentInfo: {
           paystackReference: chargeData.reference, // Use the Paystack transaction reference
           amount: chargeData.amount / 100, // Convert amount from kobo back to main currency unit (e.g., Naira)
-          currency: chargeData.currency, // Pass the currency from Paystack charge data
         },
       });
       console.log("Convex purchaseTicket mutation completed:", result);

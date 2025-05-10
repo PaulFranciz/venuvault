@@ -202,7 +202,6 @@ export const purchaseTicket = mutation({
     paymentInfo: v.object({
       paystackReference: v.string(),
       amount: v.number(),
-      currency: v.string(),
     }),
   },
   handler: async (ctx, { eventId, userId, waitingListId, paymentInfo }) => {
@@ -262,7 +261,6 @@ export const purchaseTicket = mutation({
         status: TICKET_STATUS.VALID,
         paystackReference: paymentInfo.paystackReference,
         amount: paymentInfo.amount,
-        currency: paymentInfo.currency,
       });
 
       console.log("Updating waiting list status to purchased");

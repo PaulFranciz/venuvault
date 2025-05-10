@@ -59,71 +59,11 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
         // OR: throw new Error(`Ticket ${ticket._id} is missing Paystack reference.`);
       }
 
-      // CRITICAL TODO: The currency for the refund MUST match the original transaction's currency.
-      // 1. Store 'currency' (e.g., "NGN", "GBP") with each ticket in Convex 'tickets' table
-      //    (get it from `chargeData.currency` in the Paystack webhook and pass to `purchaseTicket` mutation).
-      // 2. Ensure your Convex query `api.tickets.getValidTicketsForEvent` returns this 'currency' field for each ticket.
-      // 3. The logic below attempts to use `ticket.currency` and defaults to "NGN".
-      //    This "NGN" default WILL BE INCORRECT for past transactions in other currencies (e.g., your £240 GBP transaction)
-      //    until `ticket.currency` is correctly populated and retrieved for ALL tickets.
-
-      // Assert ticket type for currency property if not formally typed yet
-      // Replace `(ticket as any).currency` with `ticket.currency` once the type definition for tickets fetched by 
-      // `api.tickets.getValidTicketsForEvent` includes the `currency` field.
-      const ticketFromDb = ticket as any; // Temporary type assertion
-      let determinedTicketCurrency = ticketFromDb.currency;
-
-      if (!determinedTicketCurrency) {
-          determinedTicketCurrency = "NGN"; // Default to NGN if currency is not on the ticket object
-          console.warn(`Ticket ${ticket._id} (Ref: ${ticket.paystackReference}) is MISSING currency information from the database. Defaulting refund currency to '${determinedTicketCurrency}'. This may be INCORRECT for non-NGN past transactions.`);
-      } else {
-          console.log(`Using currency '${determinedTicketCurrency}' from ticket object for refund of ticket ${ticket._id} (Ref: ${ticket.paystackReference}).`);
-      }
-      
-      const ticketCurrency = determinedTicketCurrency; // Use the determined currency
-      const ticketAmountInSmallestUnit = ticket.amount ? ticket.amount * 100 : undefined;
-
-      if (ticketAmountInSmallestUnit === undefined) {
-        // This case should ideally not happen if ticket.amount is always set
-        console.error(`Ticket ${ticket._id} (Ref: ${ticket.paystackReference}) has no amount, attempting full refund without amount specified.`);
-        // Fallback to original behavior if amount is missing for some reason
-        const refundPayload = {
-            transaction: ticket.paystackReference,
-        };
-        console.log("Sending Paystack Refund Payload (amount not specified):", JSON.stringify(refundPayload));
-      } else {
-        console.log(`Attempting refund via fetch for ticket ${ticket._id} (Ref: ${ticket.paystackReference}) Amount: ${ticketAmountInSmallestUnit} ${ticketCurrency}`);
-        const refundPayload = {
-            transaction: ticket.paystackReference,
-            amount: ticketAmountInSmallestUnit,
-            currency: ticketCurrency, // Explicitly set currency
-        };
-        console.log("Sending Paystack Refund Payload (explicit amount & currency):", JSON.stringify(refundPayload));
-      }
-
-      // The actual refundPayload used in the fetch will be defined based on the logic above
-      // For clarity, let's re-define it for the fetch call or ensure the scope is correct.
-      // To keep it simple for this edit, I'll assume the correct refundPayload is constructed
-      // and focus on ensuring the structure for the explicit case is shown.
-      // The existing try/catch for fetch will use the payload.
-      // For this edit, I will ensure the explicit payload construction is clear and then show where it's used.
-
-      // Corrected structure:
-      let refundPayloadToSend: { transaction: string; amount?: number; currency?: string };
-      if (ticket.amount && ticketCurrency) { // Assuming ticketCurrency will be reliably determined
-          refundPayloadToSend = {
-              transaction: ticket.paystackReference,
-              amount: ticket.amount * 100, // Convert to smallest unit
-              currency: ticketCurrency // Use the determined currency
-          };
-          console.log(`Attempting refund for ticket ${ticket._id} (Ref: ${ticket.paystackReference}). Payload:`, JSON.stringify(refundPayloadToSend));
-      } else {
-          // Fallback to full refund if amount or currency is missing (original behavior)
-          refundPayloadToSend = {
-              transaction: ticket.paystackReference
-          };
-          console.warn(`Amount or currency missing for ticket ${ticket._id}. Attempting full refund for Ref: ${ticket.paystackReference}. Payload:`, JSON.stringify(refundPayloadToSend));
-      }
+      console.log(`Attempting refund via fetch for ticket ${ticket._id} with reference ${ticket.paystackReference}`);
+      const refundPayload = {
+          transaction: ticket.paystackReference,
+          // amount: ticket.amount ? ticket.amount * 100 : undefined // Optional: Full refund if omitted
+      };
 
       try {
          // Issue refund through Paystack using fetch
@@ -133,7 +73,7 @@ export async function refundPaystackTransaction(eventId: Id<"events">) {
                 Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(refundPayloadToSend), // USE THE CONSTRUCTED PAYLOAD
+            body: JSON.stringify(refundPayload),
          });
 
          console.log(`Fetch Refund Status Code for Ref ${ticket.paystackReference}:`, response.status);
