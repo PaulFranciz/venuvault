@@ -47,16 +47,64 @@ export const create = mutation({
     price: v.number(),
     totalTickets: v.number(),
     userId: v.string(),
+    // New fields
+    locationTips: v.optional(v.string()),
+    endDate: v.optional(v.number()),
+    startTime: v.optional(v.string()),
+    endTime: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    category: v.optional(v.string()),
+    isPublished: v.optional(v.boolean()),
+    inviteOnly: v.optional(v.boolean()),
+    refundPolicy: v.optional(v.string()),
+    organizerAbsorbsFees: v.optional(v.boolean()),
+    isFreeEvent: v.optional(v.boolean()), // Added isFreeEvent
+    ticketTypes: v.optional(v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        description: v.optional(v.string()),
+        price: v.number(),
+        quantity: v.number(),
+        remaining: v.number(),
+        isSoldOut: v.optional(v.boolean()),
+        isHidden: v.optional(v.boolean()),
+        allowGroupPurchase: v.optional(v.boolean()),
+        maxPerTransaction: v.optional(v.number()),
+        minPerTransaction: v.optional(v.number()),
+        priceInfo: v.optional(v.string()), // Added priceInfo
+      })
+    )),
   },
   handler: async (ctx, args) => {
+    const { 
+      name, description, location, eventDate, price, totalTickets, userId,
+      locationTips, endDate, startTime, endTime, timezone, category,
+      isPublished, inviteOnly, refundPolicy, organizerAbsorbsFees, ticketTypes,
+      isFreeEvent // Added isFreeEvent
+    } = args;
+    
     const eventId = await ctx.db.insert("events", {
-      name: args.name,
-      description: args.description,
-      location: args.location,
-      eventDate: args.eventDate,
-      price: args.price,
-      totalTickets: args.totalTickets,
-      userId: args.userId,
+      name,
+      description,
+      location,
+      eventDate,
+      price,
+      totalTickets,
+      userId,
+      // Include new fields if they're defined
+      ...(locationTips !== undefined && { locationTips }),
+      ...(endDate !== undefined && { endDate }),
+      ...(startTime !== undefined && { startTime }),
+      ...(endTime !== undefined && { endTime }),
+      ...(timezone !== undefined && { timezone }),
+      ...(category !== undefined && { category }),
+      ...(isPublished !== undefined && { isPublished }),
+      ...(inviteOnly !== undefined && { inviteOnly }),
+      ...(refundPolicy !== undefined && { refundPolicy }),
+      ...(organizerAbsorbsFees !== undefined && { organizerAbsorbsFees }),
+      ...(isFreeEvent !== undefined && { isFreeEvent }), // Added isFreeEvent
+      ...(ticketTypes !== undefined && { ticketTypes }),
     });
     return eventId;
   },
@@ -117,8 +165,13 @@ interface JoinWaitingListResult {
 // Join waiting list for an event
 export const joinWaitingList = mutation({
   // Function takes an event ID and user ID as arguments
-  args: { eventId: v.id("events"), userId: v.string() },
-  handler: async (ctx, { eventId, userId }): Promise<JoinWaitingListResult> => {
+  args: { 
+    eventId: v.id("events"), 
+    userId: v.string(),
+    ticketTypeId: v.optional(v.string()),
+    quantity: v.optional(v.number())
+  },
+  handler: async (ctx, { eventId, userId, ticketTypeId, quantity = 1 }): Promise<JoinWaitingListResult> => {
     // Rate limit check
     const status = await rateLimiter.limit(ctx, "queueJoin", { key: userId });
     if (!status.ok) {
@@ -160,6 +213,8 @@ export const joinWaitingList = mutation({
         userId,
         status: WAITING_LIST_STATUS.OFFERED, // Mark as offered
         offerExpiresAt: now + DURATIONS.TICKET_OFFER, // Set expiration time
+        ticketTypeId,
+        quantity
       });
 
       // Schedule a job to expire this offer after the offer duration
@@ -177,6 +232,8 @@ export const joinWaitingList = mutation({
         eventId,
         userId,
         status: WAITING_LIST_STATUS.WAITING, // Mark as waiting
+        ticketTypeId,
+        quantity
       });
     }
 
@@ -252,18 +309,45 @@ export const purchaseTicket = mutation({
       throw new Error("Event is no longer active");
     }
 
+    // Get ticket quantity and type from waiting list entry
+    const ticketTypeId = waitingListEntry.ticketTypeId;
+    const quantity = waitingListEntry.quantity || 1;
+    
+    // If this is a typed ticket, update the remaining count
+    if (ticketTypeId && event.ticketTypes) {
+      const updatedTicketTypes = event.ticketTypes.map(type => {
+        if (type.id === ticketTypeId) {
+          // Reduce the remaining count
+          return {
+            ...type,
+            remaining: Math.max(0, type.remaining - quantity),
+            isSoldOut: type.remaining - quantity <= 0
+          };
+        }
+        return type;
+      });
+      
+      // Update the event with the new ticket type quantities
+      await ctx.db.patch(eventId, {
+        ticketTypes: updatedTicketTypes
+      });
+    }
+
     try {
       console.log("Creating ticket with payment info", paymentInfo);
-      // Create ticket with payment info
-      await ctx.db.insert("tickets", {
-        eventId,
-        userId,
-        purchasedAt: Date.now(),
-        status: TICKET_STATUS.VALID,
-        paystackReference: paymentInfo.paystackReference,
-        amount: paymentInfo.amount,
-        currency: paymentInfo.currency,
-      });
+      // Create tickets based on quantity (one record per ticket)
+      for (let i = 0; i < quantity; i++) {
+        await ctx.db.insert("tickets", {
+          eventId,
+          userId,
+          purchasedAt: Date.now(),
+          status: TICKET_STATUS.VALID,
+          paystackReference: paymentInfo.paystackReference,
+          amount: paymentInfo.amount / quantity, // Divide the amount per ticket
+          currency: paymentInfo.currency,
+          ticketTypeId, // Store the ticket type
+        });
+      }
 
       console.log("Updating waiting list status to purchased");
       await ctx.db.patch(waitingListId, {
@@ -442,6 +526,34 @@ export const updateEvent = mutation({
     eventDate: v.number(),
     price: v.number(),
     totalTickets: v.number(),
+    // New fields
+    locationTips: v.optional(v.string()),
+    endDate: v.optional(v.number()),
+    startTime: v.optional(v.string()),
+    endTime: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    category: v.optional(v.string()),
+    isPublished: v.optional(v.boolean()),
+    inviteOnly: v.optional(v.boolean()),
+    refundPolicy: v.optional(v.string()),
+    organizerAbsorbsFees: v.optional(v.boolean()),
+    isFreeEvent: v.optional(v.boolean()), // Added isFreeEvent
+    ticketTypes: v.optional(v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        description: v.optional(v.string()),
+        price: v.number(),
+        quantity: v.number(),
+        remaining: v.number(),
+        isSoldOut: v.optional(v.boolean()),
+        isHidden: v.optional(v.boolean()),
+        allowGroupPurchase: v.optional(v.boolean()),
+        maxPerTransaction: v.optional(v.number()),
+        minPerTransaction: v.optional(v.number()),
+        priceInfo: v.optional(v.string()), // Added priceInfo
+      })
+    )),
   },
   handler: async (ctx, args) => {
     const { eventId, ...updates } = args;
@@ -463,6 +575,39 @@ export const updateEvent = mutation({
       throw new Error(
         `Cannot reduce total tickets below ${soldTickets.length} (number of tickets already sold)`
       );
+    }
+
+    // For ticket types, ensure we're not reducing below sold count per type
+    if (updates.ticketTypes) {
+      // If we have ticket types in the updates
+      const existingTickets = await ctx.db
+        .query("tickets")
+        .withIndex("by_event", (q) => q.eq("eventId", eventId))
+        .filter((q) =>
+          q.or(q.eq(q.field("status"), "valid"), q.eq(q.field("status"), "used"))
+        )
+        .collect();
+      
+      // Count sold tickets by ticket type
+      const soldByType: Record<string, number> = {};
+      existingTickets.forEach(ticket => {
+        if (ticket.ticketTypeId) {
+          soldByType[ticket.ticketTypeId] = (soldByType[ticket.ticketTypeId] || 0) + 1;
+        }
+      });
+      
+      // Check each type's quantity
+      for (const type of updates.ticketTypes) {
+        const soldForType = soldByType[type.id] || 0;
+        if (type.quantity < soldForType) {
+          throw new Error(
+            `Cannot reduce "${type.name}" ticket type quantity below ${soldForType} (already sold)`
+          );
+        }
+        
+        // Update the remaining count based on sold tickets
+        type.remaining = type.quantity - soldForType;
+      }
     }
 
     await ctx.db.patch(eventId, updates);

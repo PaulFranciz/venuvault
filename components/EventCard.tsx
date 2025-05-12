@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
 import { Id } from "@/convex/_generated/dataModel";
@@ -34,6 +35,22 @@ export default function EventCard({ eventId }: { eventId: Id<"events"> }) {
     userId: user?.id ?? "",
   });
   const imageUrl = useStorageUrl(event?.imageStorageId);
+
+  // Calculate display price - moved to top level
+  const displayPrice = React.useMemo(() => {
+    if (!event) return 0;
+
+    if (event.isFreeEvent) return "Free";
+
+    if (event.ticketTypes && event.ticketTypes.length > 0) {
+      // Filter visible ticket types and get minimum price
+      const visibleTypes = event.ticketTypes.filter((t) => !t.isHidden);
+      if (visibleTypes.length > 0) {
+        return Math.min(...visibleTypes.map((t) => t.price));
+      }
+    }
+    return event.price;
+  }, [event]);
 
   if (!event || !availability) {
     return null;
@@ -198,7 +215,7 @@ export default function EventCard({ eventId }: { eventId: Id<"events"> }) {
                   : "bg-green-50 text-green-700"
               }`}
             >
-              £{event.price.toFixed(2)}
+              {typeof displayPrice === "string" ? displayPrice : `₦${displayPrice.toFixed(2)}`}
             </span>
             {availability.purchasedCount >= availability.totalTickets && (
               <span className="px-4 py-1.5 bg-red-50 text-red-700 font-semibold rounded-full text-sm">

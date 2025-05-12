@@ -1,6 +1,5 @@
 "use client";
 
-import { initializePaystackTransaction } from "@/app/actions/initializePaystackTransaction";
 import { Id } from "@/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 import { useUser } from "@clerk/nextjs";
@@ -8,13 +7,16 @@ import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
 import ReleaseTicket from "./ReleaseTicket";
 import { Ticket } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
   const { user } = useUser();
+  const router = useRouter();
   const queuePosition = useQuery(api.waitingList.getQueuePosition, {
     eventId,
     userId: user?.id ?? "",
   });
+  const event = useQuery(api.events.getById, { eventId });
 
   const [timeRemaining, setTimeRemaining] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -22,6 +24,24 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
 
   const offerExpiresAt = queuePosition?.offerExpiresAt ?? 0;
   const isExpired = Date.now() > offerExpiresAt;
+
+  // Get the ticket type and calculate total price
+  const ticketTypeId = queuePosition?.ticketTypeId;
+  const quantity = queuePosition?.quantity || 1;
+  
+  let ticketPrice = event?.price || 0;
+  let ticketName = "General Admission";
+  let isFreeEvent = event?.isFreeEvent;
+  
+  if (ticketTypeId && event?.ticketTypes) {
+    const selectedType = event.ticketTypes.find(type => type.id === ticketTypeId);
+    if (selectedType) {
+      ticketPrice = selectedType.price;
+      ticketName = selectedType.name;
+    }
+  }
+  
+  const totalPrice = ticketPrice * quantity;
 
   useEffect(() => {
     const calculateTimeRemaining = () => {
@@ -54,26 +74,9 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
     }
   }, [offerExpiresAt, isExpired]);
 
-  const handlePurchase = async () => {
+  const handlePurchase = () => {
     if (!user || isExpired) return;
-    setError(null);
-    setIsLoading(true);
-
-    try {
-      const result = await initializePaystackTransaction({
-        eventId,
-      });
-
-      if (result?.authorizationUrl) {
-        window.location.href = result.authorizationUrl;
-      } else {
-        throw new Error("Failed to initialize Paystack payment.");
-      }
-    } catch (err) {
-      console.error("Error initializing Paystack transaction:", err);
-      setError(err instanceof Error ? err.message : "Could not start payment process.");
-      setIsLoading(false);
-    }
+    router.push(`/checkout/${eventId}`);
   };
 
   if (!user || !queuePosition || queuePosition.status !== "offered") {
@@ -104,6 +107,30 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
                 ? "Your offer to purchase this ticket has expired." 
                 : "A ticket has been reserved for you. Complete your purchase before the timer expires to secure your spot at this event."}
             </div>
+            
+            {/* Display ticket details */}
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">{ticketName}</span>
+                <span className="font-medium">
+                  {isFreeEvent ? "Free" : `₦${ticketPrice.toFixed(2)}`}
+                </span>
+              </div>
+              
+              {quantity > 1 && (
+                <div className="flex justify-between text-sm mt-1">
+                  <span className="text-gray-600">Quantity</span>
+                  <span className="font-medium">{quantity}</span>
+                </div>
+              )}
+              
+              <div className="flex justify-between text-base font-bold mt-3 pt-3 border-t border-gray-100">
+                <span>Total</span>
+                <span className="text-blue-600">
+                  {isFreeEvent ? "Free" : `₦${totalPrice.toFixed(2)}`}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -113,22 +140,17 @@ export default function PurchaseTicket({ eventId }: { eventId: Id<"events"> }) {
 
         <button
           onClick={handlePurchase}
-          disabled={isExpired || isLoading}
+          disabled={isExpired}
           className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-white px-8 py-4 rounded-lg font-bold shadow-md hover:from-amber-600 hover:to-amber-700 transform hover:scale-[1.02] transition-all duration-200 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:hover:scale-100 text-lg"
         >
-          {isLoading
-            ? "Redirecting to Payment..."
-            : isExpired
-            ? "Offer Expired"
-            : "Purchase Your Ticket Now →"}
+          {isExpired ? "Offer Expired" : isFreeEvent ? "Get Free Ticket →" : `Pay ₦${totalPrice.toFixed(2)} Now →`}
         </button>
 
         {!isExpired && (
-             <div className="mt-4">
-                 <ReleaseTicket eventId={eventId} waitingListId={queuePosition._id} />
-             </div>
-         )}
-
+          <div className="mt-4">
+            <ReleaseTicket eventId={eventId} waitingListId={queuePosition._id} />
+          </div>
+        )}
       </div>
     </div>
   );

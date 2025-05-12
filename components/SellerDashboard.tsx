@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
 import { createOrUpdatePaystackSubaccount } from "@/app/actions/createPaystackSubaccount";
 import {
   getPaystackSubaccountStatus,
@@ -16,33 +17,35 @@ import {
    VerificationResult
 } from "@/app/actions/verifyPaystackBankAccount";
 import Spinner from "./Spinner";
-import { CalendarDays, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CalendarDays, Plus, LayoutDashboard, UserCircle, CreditCard, Settings, TrendingUp, MessageSquare, UsersIcon } from "lucide-react";
+import WelcomeStep from "@/components/seller-onboarding/WelcomeStep";
+import OrganizerProfileForm, { OrganizerProfileSubmitData } from "@/components/seller-onboarding/OrganizerProfileForm";
+import DashboardLayout from "./seller-dashboard/DashboardLayout";
+import DashboardHome from "./seller-dashboard/DashboardHome";
 
-// --- Paystack Onboarding Form Component --- (Updated for two-step process)
+// Define onboarding steps
+type OnboardingStep = "loading" | "welcome" | "profileForm" | "paymentSetup" | "dashboard";
+
+// --- Paystack Onboarding Form Component ---
 function PaystackOnboardingForm({
   onSuccess,
+  onBack,
 }: {
-  onSuccess: () => void;
+  onSuccess: (subaccountCode: string) => void;
+  onBack: () => void;
 }) {
-  // Bank list state
   const [banks, setBanks] = useState<PaystackBank[]>([]);
   const [banksLoading, setBanksLoading] = useState(true);
   const [banksError, setBanksError] = useState<string | null>(null);
-
-  // Form input state
   const [selectedBankCode, setSelectedBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
-
-  // Verification state
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [verificationAttempted, setVerificationAttempted] = useState(false);
-
-  // Linking state
   const [isLinking, setIsLinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
-  // Fetch bank list
   useEffect(() => {
     const fetchBanks = async () => {
       setBanksLoading(true);
@@ -61,13 +64,11 @@ function PaystackOnboardingForm({
     fetchBanks();
   }, []);
 
-  // Handle VERIFY button click
   const handleVerify = async () => {
     setIsVerifying(true);
     setVerificationResult(null);
     setVerificationAttempted(true);
-    setLinkError(null); // Clear previous link error if re-verifying
-
+    setLinkError(null);
     if (!selectedBankCode || !accountNumber) {
         setVerificationResult({ success: false, message: "Bank and account number are required." });
         setIsVerifying(false);
@@ -78,7 +79,6 @@ function PaystackOnboardingForm({
         setIsVerifying(false);
         return;
     }
-
     try {
       const result = await verifyPaystackBankAccount({
         bankCode: selectedBankCode,
@@ -86,7 +86,6 @@ function PaystackOnboardingForm({
       });
       setVerificationResult(result);
     } catch (err) {
-      // This catch is for unexpected errors during the action call itself
       console.error("Error calling verification action:", err);
       setVerificationResult({ success: false, message: "An unexpected server error occurred during verification." });
     } finally {
@@ -94,27 +93,21 @@ function PaystackOnboardingForm({
     }
   };
 
-  // Handle LINK ACCOUNT button click
   const handleLinkAccount = async () => {
-    // Should only be clickable if verification was successful
     if (!verificationResult?.success || !selectedBankCode || !accountNumber) {
         setLinkError("Verification must succeed before linking.");
         return;
     }
-
     setIsLinking(true);
     setLinkError(null);
-
     try {
       const result = await createOrUpdatePaystackSubaccount({
         bankCode: selectedBankCode,
         accountNumber: accountNumber,
       });
-
       if (result?.subaccountCode) {
-        onSuccess(); // Trigger refresh in parent dashboard
+        onSuccess(result.subaccountCode);
       } else {
-        // Should be caught by the action's error handling, but belt-and-suspenders
         throw new Error("Failed to link payout account.");
       }
     } catch (err) {
@@ -126,22 +119,23 @@ function PaystackOnboardingForm({
   };
 
   return (
-    <div className="space-y-6 max-w-md mx-auto">
-      <h3 className="text-xl font-semibold mb-4 text-center">Link Payout Account</h3>
-      <p className="text-gray-600 mb-6 text-center">
-        Verify your Nigerian bank account details to receive payments via Paystack.
-      </p>
-
-      {/* Bank Selection */}
+    <div className="space-y-6 max-w-md mx-auto py-8">
+      <div className="text-center">
+          <CreditCard className="w-12 h-12 mx-auto text-brand-teal mb-3" />
+          <h3 className="text-2xl font-semibold mb-2 text-slate-800">Link Payout Account</h3>
+          <p className="text-slate-600 mb-6">
+            Verify your Nigerian bank account details to receive payments securely via Paystack.
+          </p>
+      </div>
       <div>
         <label htmlFor="bankCode" className="block text-sm font-medium text-gray-700 mb-1">Bank:</label>
         <select
           id="bankCode"
           value={selectedBankCode}
-          onChange={(e) => { setSelectedBankCode(e.target.value); setVerificationAttempted(false); setVerificationResult(null); } } // Reset verification on change
+          onChange={(e) => { setSelectedBankCode(e.target.value); setVerificationAttempted(false); setVerificationResult(null); } }
           required
-          disabled={banksLoading || banksError !== null}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+          disabled={banksLoading || banksError !== null || isLinking || isVerifying}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-teal focus:border-brand-teal disabled:bg-gray-100"
         >
           <option value="" disabled>
             {banksLoading ? "Loading banks..." : banksError ? "Error loading banks" : "-- Select Bank --"}
@@ -152,89 +146,83 @@ function PaystackOnboardingForm({
         </select>
          {banksError && <p className="text-xs text-red-600 mt-1">Error: {banksError}</p>}
       </div>
-
-      {/* Account Number Input */}
       <div>
         <label htmlFor="accountNumber" className="block text-sm font-medium text-gray-700 mb-1">NUBAN Account Number:</label>
         <input
           id="accountNumber"
           type="text"
           value={accountNumber}
-          onChange={(e) => { setAccountNumber(e.target.value); setVerificationAttempted(false); setVerificationResult(null); } } // Reset verification on change
+          onChange={(e) => { setAccountNumber(e.target.value); setVerificationAttempted(false); setVerificationResult(null); } } 
           required
           maxLength={10}
           pattern="\d{10}"
           title="10-digit NUBAN account number"
           placeholder="0123456789"
-          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+          disabled={isLinking || isVerifying}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-teal focus:border-brand-teal"
         />
       </div>
-
-      {/* Verify Button */}
       <button
-        type="button" // Change type to button
+        type="button"
         onClick={handleVerify}
         disabled={isVerifying || isLinking || banksLoading || banksError !== null || !selectedBankCode || !accountNumber}
-        className="w-full bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50"
+        className="w-full border border-brand-teal text-brand-teal px-6 py-3 rounded-lg hover:bg-brand-teal hover:text-white transition-colors disabled:opacity-50 font-semibold"
       >
-        {isVerifying ? "Verifying..." : "Verify Account Details"}
+        {isVerifying ? <Spinner /> : "Verify Account Details"}
       </button>
-
-      {/* Verification Result Display */} 
       {verificationAttempted && verificationResult && (
-          <div className={`text-sm text-center p-2 rounded ${verificationResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+          <div className={`text-sm text-center p-3 rounded-md ${verificationResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
               {verificationResult.success
                   ? `✅ Verification Successful! Account Name: ${verificationResult.accountName}`
                   : `❌ Verification Failed: ${verificationResult.message}`}
           </div>
       )}
-
-       {/* Link Account Button - Conditionally Enabled */}
       <button
-        type="button" // Change type to button
+        type="button" 
         onClick={handleLinkAccount}
         disabled={!verificationAttempted || !verificationResult?.success || isLinking || isVerifying}
-        className="w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-brand-teal text-white px-6 py-3 rounded-lg hover:bg-opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold flex items-center justify-center focus:ring-4 focus:ring-brand-teal focus:ring-opacity-50"
       >
-        {isLinking ? "Linking Account..." : "Link Verified Account"}
+        {isLinking ? <><Spinner />Linking Account...</> : "Link Verified Account & Proceed"}
       </button>
-
-      {/* Link Error Display */} 
       {linkError && (
          <p className="text-sm text-red-600 text-center">Error: {linkError}</p>
       )}
-
+       <Button variant="outline" onClick={onBack} disabled={isLinking || isVerifying} className="w-full mt-2">
+         Back to Profile Setup
+       </Button>
     </div>
   );
 }
 
-// --- Payout Account Status Display Component --- (Adapted from previous example)
-function PayoutAccountStatusDisplay({ status }: { status: PaystackAccountStatus }) {
-
+// --- Payout Account Status Display Component ---
+function PayoutAccountStatusDisplay({ status, onSetupPayout }: { status: PaystackAccountStatus | null, onSetupPayout: () => void }) {
     if (!status || !status.subaccountCode) {
-        // This case should ideally be handled by the parent checking subaccountCode before rendering this
         return (
-             <p className="text-center text-gray-500">Payout account not linked.</p>
+            <div className="text-center py-8">
+                <p className="text-gray-600 mb-4">Your payout account is not yet linked.</p>
+                <Button onClick={onSetupPayout} className="bg-brand-teal hover:bg-brand-teal/90 text-white">
+                    <CreditCard className="mr-2 h-4 w-4" /> Setup Payout Account
+                </Button>
+            </div>
         )
     }
-
     const isReady = status.isActive && status.hasBankDetails;
-
     return (
-        <div className="bg-gray-50 rounded-lg p-6 border border-gray-200 space-y-4">
+        <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm space-y-4">
             <h3 className="text-lg font-semibold text-gray-800 mb-3">Payout Account Status</h3>
             <div className="flex items-center">
                  <span className={`w-3 h-3 rounded-full mr-2 ${isReady ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-                 <span className="font-medium">
-                     {isReady ? "Active & Ready" : "Needs Attention"}
+                 <span className="font-medium text-gray-700">
+                     {isReady ? "Active & Ready for Payouts" : "Needs Attention / Pending Verification"}
                  </span>
             </div>
              <p className="text-sm text-gray-600">
-                 {status.message || (isReady ? "Your account is ready to receive payouts." : "Account may be inactive or bank details incomplete.")}
+                 {status.message || (isReady ? "Your account is set up to receive payouts from your event sales." : "Your Paystack subaccount may be inactive or bank details are still under review by Paystack.")}
              </p>
              <p className="text-xs text-gray-500">Subaccount Code: {status.subaccountCode}</p>
-             <a href="https://dashboard.paystack.com/#/login" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                 Go to Paystack Dashboard
+             <a href="https://dashboard.paystack.com/#/login" target="_blank" rel="noopener noreferrer" className="text-sm text-brand-teal hover:underline">
+                 Go to Paystack Dashboard for more details
              </a>
         </div>
     );
@@ -243,143 +231,239 @@ function PayoutAccountStatusDisplay({ status }: { status: PaystackAccountStatus 
 
 // --- Main Seller Dashboard Component ---
 export default function SellerDashboard() {
-  const { user } = useUser();
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const { user, isLoaded: isClerkLoaded } = useUser();
+  const [currentOnboardingStep, setCurrentOnboardingStep] = useState<OnboardingStep>("loading");
+
+  const userProfile = useQuery(api.users.getUserProfile, user ? undefined : "skip");
+  const updateUserProfileMutation = useMutation(api.users.updateUserProfile);
+
+  const [paystackStatusLoading, setPaystackStatusLoading] = useState(true);
+  const [paystackStatusError, setPaystackStatusError] = useState<string | null>(null);
   const [paystackStatus, setPaystackStatus] = useState<PaystackAccountStatus | null>(null);
 
-  // Get the query result directly. It will be string | null | undefined.
-  const paystackSubaccountId = useQuery(api.users.getUsersPaystackSubaccountId,
-     user?.id ? { userId: user.id } : "skip"
-  );
-
-  // Determine loading state: loading if userId exists but result is undefined.
-  const idLoading = !!user?.id && paystackSubaccountId === undefined;
-
-  const isReadyToAcceptPayments = paystackStatus?.isActive && paystackStatus?.hasBankDetails;
-
-  // Fetch Paystack status when subaccount ID is available (is string or null) and not loading
   useEffect(() => {
-    const fetchStatus = async () => {
-      // Only fetch if idLoading is false (meaning query has resolved or user.id is missing)
-      if (!idLoading) {
-          // Check if we have a valid subaccount ID (string) vs. none (null)
-          if (typeof paystackSubaccountId === 'string') {
-             console.log("Subaccount ID found, fetching Paystack status...");
-             setStatusLoading(true);
-             setStatusError(null);
-             try {
-               const result = await getPaystackSubaccountStatus();
-               setPaystackStatus(result);
-             } catch (err) {
-               console.error("Failed to fetch Paystack status:", err);
-               setStatusError(
-                 err instanceof Error ? err.message : "Could not fetch account status."
-               );
-               setPaystackStatus(null); // Clear previous status on error
-             } finally {
-               setStatusLoading(false);
-             }
-           } else if (paystackSubaccountId === null) {
-             // User exists, query ran, but no subaccount found
-             console.log("Query loaded: No Paystack subaccount linked for user.");
-             setPaystackStatus(null);
-             setStatusLoading(false);
-             setStatusError(null);
-           } else {
-             // Handle unexpected states or initial undefined state before user.id is ready
-             console.log("No user ID or subaccount ID not yet determined.");
-             setPaystackStatus(null);
-             setStatusLoading(false);
-             setStatusError(null);
-           }
-       }
+    // Initial loading checks: if Clerk user or Convex userProfile is not yet available.
+    if (!isClerkLoaded || !user?.id || (user?.id && userProfile === undefined)) {
+      setCurrentOnboardingStep("loading");
+      return;
+    }
+    console.log("EFFECT TOP:", { userProfile, currentOnboardingStep }); // Added log
+
+    // Case: Convex userProfile is explicitly null (e.g., new user created, no profile data yet).
+    if (userProfile === null) {
+      setCurrentOnboardingStep("welcome");
+      return;
+    }
+
+    // ---- Start of block where userProfile is guaranteed to be an object ----
+    if (userProfile) { 
+        console.log("EFFECT IN IF(userProfile):", { userProfile, currentOnboardingStep }); // Added log
+
+        const isDefaultName = !userProfile.name || userProfile.name.trim() === "" || userProfile.name.trim() === "New User";
+        const organizerDetailsFilled = 
+            !!userProfile.logoStorageId || 
+            !!userProfile.bannerStorageId || 
+            (!!userProfile.socialLinks?.instagram && userProfile.socialLinks.instagram.trim() !== "") || 
+            (!!userProfile.socialLinks?.twitter && userProfile.socialLinks.twitter.trim() !== "");
+        const paystackLinked = !!userProfile.paystackSubaccountId;
+
+        // Specific log for post-profile submission state
+        if (currentOnboardingStep === "profileForm") {
+            console.log("POST_PROFILE_SUBMIT_CHECK (in useEffect):", {
+                currentOnboardingStep,
+                onboardingComplete: userProfile.onboardingComplete,
+                isDefaultName,
+                organizerDetailsFilled,
+                paystackSubaccountId: userProfile.paystackSubaccountId, // Log the actual value
+                paystackLinked, // Log the derived boolean
+                userProfile // Log the whole profile for inspection
+            });
+        }
+
+        // If onboarding is marked complete AND the paystack ID is present, go to dashboard.
+        // This ensures that the paystackSubaccountId is available when dashboard-related effects run.
+        if (userProfile.onboardingComplete && userProfile.paystackSubaccountId) {
+            setCurrentOnboardingStep("dashboard");
+        } 
+        // If onboarding is complete BUT paystack ID is somehow missing.
+        // This might be a transient state if userProfile from useQuery hasn't fully updated yet.
+        // Reverting or staying in 'paymentSetup' allows effects to re-run when userProfile does update.
+        else if (userProfile.onboardingComplete && !userProfile.paystackSubaccountId) {
+            console.warn("SellerDashboard: Onboarding marked complete, but Paystack ID not yet present in userProfile. Holding/reverting to paymentSetup.");
+            // Explicitly set to paymentSetup to ensure it doesn't fall through to other states incorrectly
+            // or get stuck if currentOnboardingStep was something else.
+            setCurrentOnboardingStep("paymentSetup"); 
+        }
+        // If onboarding is NOT complete:
+        else if (!userProfile.onboardingComplete) { // This outer 'else if' encompasses all !onboardingComplete cases
+            if (!paystackLinked) { // Cases where Paystack is NOT linked
+                if (isDefaultName || !organizerDetailsFilled) {
+                    // Profile is incomplete (name is default OR details not filled), and no Paystack.
+                    // Should be at welcome or profile form.
+                    if (currentOnboardingStep !== "profileForm") {
+                        setCurrentOnboardingStep("welcome");
+                    }
+                    // If currentOnboardingStep IS "profileForm", it stays there, allowing user to fill it.
+                } else { // Profile IS complete (!isDefaultName && organizerDetailsFilled), but no Paystack.
+                    // This is the branch that could prematurely jump to paymentSetup.
+                    // Only go to paymentSetup if we've explicitly passed profileForm or are already trying to load paymentSetup.
+                    if (currentOnboardingStep === "profileForm" || currentOnboardingStep === "paymentSetup") {
+                        setCurrentOnboardingStep("paymentSetup");
+                    } else {
+                        // Otherwise (e.g., currentOnboardingStep is "loading", "welcome"),
+                        // force to "welcome" to ensure the user sees the initial steps,
+                        // even if their profile data from a previous session looks complete.
+                        setCurrentOnboardingStep("welcome");
+                    }
+                }
+            } else { // Cases where Paystack IS linked (but onboardingComplete is still false)
+                // This means profile details are presumably filled (as not caught by the block above),
+                // Paystack is linked, but the final onboardingComplete flag isn't set. Time to set it.
+                console.log("Profile, details, and Paystack complete, but onboarding flag false. Setting flag.");
+                updateUserProfileMutation({ onboardingComplete: true })
+                    .then(() => {
+                        setCurrentOnboardingStep("dashboard");
+                    })
+                    .catch(error => {
+                        console.error("Error auto-marking onboarding complete:", error);
+                        setCurrentOnboardingStep("paymentSetup"); // Fallback
+                    });
+            }
+        }
+        // Fallback within the `if (userProfile)` block:
+        // If currentOnboardingStep is still "loading" here, it means userProfile exists
+        // but didn't fit any of the more specific conditions above. Safest to go to welcome.
+        else if (currentOnboardingStep === "loading") {
+            console.warn("SellerDashboard: Fallback from loading (with defined userProfile). Defaulting to welcome.");
+            setCurrentOnboardingStep("welcome");
+        }
+    } 
+    // ---- End of block where userProfile is guaranteed to be an object ----
+    
+    // Additional fallbacks if userProfile is NOT an object (e.g., somehow still undefined or became null again)
+    // and the earlier checks didn't fully resolve the currentOnboardingStep from "loading".
+    // These are more defensive.
+    else if (currentOnboardingStep === "loading") {
+        // If userProfile is not an object (e.g. undefined) and we are still loading, default to welcome.
+        // The top check `userProfile === undefined` should catch this, but as a safeguard.
+        console.warn("SellerDashboard: Fallback from loading (userProfile not an object). Defaulting to welcome.");
+        setCurrentOnboardingStep("welcome");
+    }
+
+  }, [isClerkLoaded, user, userProfile, updateUserProfileMutation, currentOnboardingStep]);
+
+  useEffect(() => {
+    const fetchPaystackAccStatus = async () => {
+      if (userProfile?.paystackSubaccountId) {
+        console.log("Fetching Paystack status for subaccount ID:", userProfile.paystackSubaccountId);
+        setPaystackStatusLoading(true);
+        setPaystackStatusError(null);
+        try {
+          const status = await getPaystackSubaccountStatus();
+          setPaystackStatus(status);
+          console.log("Paystack status fetched:", status);
+        } catch (err) {
+          console.error("Failed to fetch Paystack subaccount status:", err);
+          setPaystackStatusError(err instanceof Error ? err.message : "Could not load Paystack status.");
+        } finally {
+          setPaystackStatusLoading(false);
+        }
+      } else {
+        // No paystackSubaccountId means no account is linked yet from our system's perspective
+        setPaystackStatus(null);
+        setPaystackStatusLoading(false);
+        console.log("No Paystack subaccount ID found in profile, skipping status fetch.");
+      }
     };
 
-     fetchStatus();
+    if (currentOnboardingStep === "dashboard" && userProfile) { // Only fetch if on dashboard and profile exists
+        fetchPaystackAccStatus();
+    }
+  }, [userProfile, currentOnboardingStep]); // Depend on userProfile (for subaccountId) and currentOnboardingStep
 
-  }, [paystackSubaccountId, idLoading]); // Rerun when ID or loading state changes
-
-  const handleOnboardingSuccess = () => {
-    console.log("Onboarding successful. UI will refresh when query updates.");
-    // TODO: Implement a more robust refresh mechanism if needed, e.g., state update or page reload.
-    // The useQuery hook *should* automatically update when the underlying data changes in Convex
-    // after the createOrUpdatePaystackSubaccount mutation completes, but this might take time or fail.
-    // A simple reload might be the easiest initial solution:
-    // window.location.reload();
+  const handleProfileFormSubmit = async (data: OrganizerProfileSubmitData) => {
+    if (!userProfile?._id && userProfile !== null) {
+        if (userProfile && !userProfile._id) {
+             console.error("User profile object exists but is missing an ID for submission.");
+             return;
+        }
+    }
+    try {
+      await updateUserProfileMutation(data); 
+    } catch (error) {
+      console.error("Failed to update profile:", error);
+    }
   };
 
-  // Show spinner only while the user ID is available but the query result is still undefined
-  if (idLoading) {
-    return <Spinner />;
-  }
+  const handlePaymentSetupSuccess = async (subaccountCode: string) => {
+    console.log("Payment setup successful with subaccount code:", subaccountCode);
+    try {
+      await updateUserProfileMutation({
+        paystackSubaccountId: subaccountCode,
+        onboardingComplete: true, // Set true directly to simplify state transition
+      });
+      // With onboardingComplete set to true, the main useEffect will now directly
+      // transition to the dashboard once the userProfile reflects this change.
+      console.log("User profile updated with Paystack subaccount ID and onboardingComplete set to true. Main effect will handle dashboard transition.");
+      // setCurrentOnboardingStep("dashboard"); // REMOVED: Let the main useEffect handle this based on updated userProfile.
+    } catch (error) {
+      console.error("Failed to update user profile after payment setup:", error);
+      // Handle error (e.g., show a notification to the user)
+    }
+  };
+  
+  const handleSetupPayoutAccount = () => {
+    setCurrentOnboardingStep("paymentSetup");
+  };
 
-  return (
-    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-8">
-        {/* Header Section */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-8 text-white rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold">Seller Dashboard</h2>
-          <p className="text-blue-100 mt-2">
-          Manage your events and payout settings
-          </p>
+  const renderStepContent = () => {
+    switch (currentOnboardingStep) {
+      case "loading":
+        return <div className="flex justify-center items-center h-screen"><Spinner /></div>;
+      case "welcome":
+        return <WelcomeStep onNext={() => setCurrentOnboardingStep("profileForm")} />;
+      case "profileForm":
+        return (
+          <OrganizerProfileForm
+            initialData={userProfile || undefined}
+            onSubmit={handleProfileFormSubmit}
+            onBack={() => setCurrentOnboardingStep("welcome")}
+          />
+        );
+      case "paymentSetup":
+        return (
+          <PaystackOnboardingForm
+            onSuccess={handlePaymentSetupSuccess}
+            onBack={() => setCurrentOnboardingStep("profileForm")}
+          />
+        );
+      case "dashboard":
+        // Pass necessary props to DashboardHome
+        return (
+          <DashboardLayout>
+            <DashboardHome
+              userProfile={userProfile}
+              paystackStatus={paystackStatus}
+              paystackStatusLoading={paystackStatusLoading}
+              paystackStatusError={paystackStatusError}
+              onSetupPayoutAccount={handleSetupPayoutAccount} // Pass the handler
+              // TODO: Pass other necessary props like event creation handlers etc.
+            />
+          </DashboardLayout>
+        );
+      default:
+        return <p>Unknown onboarding step.</p>;
+    }
+  };
+
+  if (currentOnboardingStep !== "dashboard") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 py-12 px-4 sm:px-6 lg:px-8 flex flex-col items-center justify-center">
+        <div className="w-full max-w-xl">
+          {renderStepContent()}
         </div>
-
-       {/* Create/View Events Section (Show only if ready) */}
-        {isReadyToAcceptPayments && (
-           <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-             <h3 className="text-xl font-semibold text-gray-900 mb-4">
-               Manage Your Events
-             </h3>
-             <div className="flex flex-col sm:flex-row justify-center gap-4">
-                  <Link
-                    href="/seller/new-event"
-                 className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <Plus className="w-5 h-5" />
-                 Create New Event
-                  </Link>
-                  <Link
-                    href="/seller/events"
-                 className="flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
-                  >
-                    <CalendarDays className="w-5 h-5" />
-                    View My Events
-                  </Link>
-                </div>
-              </div>
-       )}
-
-      {/* Payout Setup / Status Section */}
-      <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-         {/* Show onboarding form only if the query has finished loading (idLoading is false) AND the result is null */} 
-         {paystackSubaccountId === null && !idLoading && (
-          <PaystackOnboardingForm onSuccess={handleOnboardingSuccess} />
-        )}
-
-        {/* Show status only if the query finished, result is non-null (string), status finished loading, and status exists */} 
-        {typeof paystackSubaccountId === 'string' && !statusLoading && paystackStatus && (
-          <PayoutAccountStatusDisplay status={paystackStatus} />
-        )}
-
-        {/* Show status loading spinner only if we have an ID but status is still loading */} 
-        {typeof paystackSubaccountId === 'string' && statusLoading && (
-             <Spinner />
-         )}
-
-        {/* Show status error only if we have an ID, status finished loading, and there was an error */} 
-        {typeof paystackSubaccountId === 'string' && !statusLoading && statusError && (
-           <p className="text-red-600 text-center">Error loading payout status: {statusError}</p>
-        )}
-
-        {/* Optional: Handle case where status loaded but is unexpectedly null/missing */} 
-        {typeof paystackSubaccountId === 'string' && !statusLoading && !paystackStatus && !statusError && (
-             <p className="text-center text-gray-500">Could not retrieve payout status details.</p>
-        )}
-
       </div>
-
-      {/* Removed old Stripe-specific buttons and logic */}
-
-    </div>
-  );
+    );
+  }
+  return renderStepContent(); 
 }

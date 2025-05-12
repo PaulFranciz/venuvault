@@ -10,7 +10,10 @@
 
 import type * as constants from "../constants.js";
 import type * as crons from "../crons.js";
+import type * as discountCodes from "../discountCodes.js";
+import type * as discounts from "../discounts.js";
 import type * as events from "../events.js";
+import type * as files from "../files.js";
 import type * as storage from "../storage.js";
 import type * as tickets from "../tickets.js";
 import type * as users from "../users.js";
@@ -33,7 +36,10 @@ import type {
 declare const fullApi: ApiFromModules<{
   constants: typeof constants;
   crons: typeof crons;
+  discountCodes: typeof discountCodes;
+  discounts: typeof discounts;
   events: typeof events;
+  files: typeof files;
   storage: typeof storage;
   tickets: typeof tickets;
   users: typeof users;
