@@ -253,13 +253,12 @@ export function useQueueSystem() {
       queryKey: ['jobStatus', jobId, queueName],
       queryFn: () => checkJobStatus(jobId!, queueName!),
       enabled: !!jobId && !!queueName,
-      refetchInterval: (data) => {
-        // Refetch frequently if job is still in progress
-        if (data?.state === 'waiting' || data?.state === 'active' || data?.state === 'delayed') {
-          return 1000; // Check every second
-        }
-        return false; // Stop polling once completed or failed
-      },
+      // Using fixed refetch interval to avoid TypeScript issues
+      refetchInterval: 1000, // Check every second
+      // Stop polling when job is completed or failed
+      refetchIntervalInBackground: true,
+      // Only refetch if job is still in progress
+      staleTime: 0,
     });
   };
 

@@ -112,7 +112,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
     if (formData.virtualLink) {
       analyzeVirtualLink(formData.virtualLink);
     }
-  }, []);
+  }, [formData.virtualLink, analyzeVirtualLink]);
 
   const handleLocationTypeChange = (value: 'physical' | 'virtual') => {
     setFormData({ locationType: value });

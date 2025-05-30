@@ -154,12 +154,15 @@ export async function POST(req: Request) {
     }
 
 
+    // Extract ticket info from the first ticket in the array
+    const ticketInfo = metadata.tickets && metadata.tickets.length > 0 ? metadata.tickets[0] : { ticketTypeId: '', quantity: 0 };
+    
     console.log("Calling Convex purchaseTicket mutation with:", {
         eventId: metadata.eventId,
         userId: metadata.userId,
         waitingListId: metadata.waitingListId,
-        ticketTypeId: metadata.ticketTypeId,
-        quantity: metadata.quantity,
+        ticketTypeId: ticketInfo.ticketTypeId,
+        quantity: ticketInfo.quantity,
         paymentRef: chargeData.reference,
         amount: chargeData.amount // Amount in kobo
     });
@@ -167,6 +170,8 @@ export async function POST(req: Request) {
 
     try {
       // Call your Convex mutation to record the purchase
+      // Note: ticketTypeId and quantity are already stored in the waitingList entry,
+      // so we don't need to pass them again
       const result = await convex.mutation(api.events.purchaseTicket, {
         eventId: metadata.eventId,
         userId: metadata.userId,

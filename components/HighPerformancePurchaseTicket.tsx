@@ -259,17 +259,17 @@ export default function HighPerformancePurchaseTicket({
   
   // Track job status and update reservation state
   useEffect(() => {
-    if (jobStatus?.state === 'completed') {
+    if (jobStatus && 'state' in jobStatus && jobStatus.state === 'completed') {
       setReservationState('reserved');
       toast.success("Your tickets are reserved for 8 minutes!");
       // Use setTimeout to avoid router updates during render cycle
       setTimeout(() => {
         router.push(`/checkout/${eventId}`);
       }, 0);
-    } else if (jobStatus?.state === 'failed') {
+    } else if (jobStatus && 'state' in jobStatus && jobStatus.state === 'failed') {
       setReservationState('error');
       toast.error("Failed to reserve tickets. Please try again.");
-    } else if (jobStatus?.state === 'active' || jobStatusLoading) {
+    } else if ((jobStatus && 'state' in jobStatus && jobStatus.state === 'active') || jobStatusLoading) {
       setReservationState('processing');
     }
   }, [jobStatus, jobStatusLoading, router, eventId]);
@@ -505,7 +505,7 @@ export default function HighPerformancePurchaseTicket({
               <div className="mt-3 bg-blue-50 p-3 rounded-lg flex items-start">
                 <AlertCircle className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-blue-700">
-                  When you reserve tickets, they'll be held for you for 8 minutes while you complete your purchase. This ensures no one else can buy them during this time.
+                  When you reserve tickets, they&apos;ll be held for you for 8 minutes while you complete your purchase. This ensures no one else can buy them during this time.
                 </p>
               </div>
               

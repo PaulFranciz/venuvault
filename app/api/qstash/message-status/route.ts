@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get QStash client
-    const client = getQStashClient();
+    const client = await getQStashClient();
     
     // Fetch message status
     const status = await client.messages.get(messageId);

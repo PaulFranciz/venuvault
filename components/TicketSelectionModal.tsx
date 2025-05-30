@@ -180,15 +180,16 @@ export default function TicketSelectionModal({
     }
   };
 
+  // Hook calls must be at the top level, before any conditionals
+  const thumbnailId = event?.thumbnailImageStorageId;
+  const imageUrl = useStorageUrl(thumbnailId);
+  
   // Format event date
   let formattedDate = "TBA";
   if (event && event.eventDate) {
     const startDate = new Date(event.eventDate);
     formattedDate = format(startDate, "EEE, d MMMM, h:mm a");
   }
-
-  // Event image URL
-  const imageUrl = useStorageUrl(event?.thumbnailImageStorageId);
 
   // Format price for display
   const formatCurrency = (amount: number) => {
@@ -320,7 +321,7 @@ export default function TicketSelectionModal({
                       </div>
                     </div>
                     <p className="text-gray-400">
-                      By purchasing you'll receive an account, and agree to our general Terms of Use, Privacy Policy and the Ticket Purchase Terms. We process your personal data in accordance with our Privacy Policy.
+                      By purchasing you&apos;ll receive an account, and agree to our general Terms of Use, Privacy Policy and the Ticket Purchase Terms. We process your personal data in accordance with our Privacy Policy.
                     </p>
                   </div>
                 </div>
