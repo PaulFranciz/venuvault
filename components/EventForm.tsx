@@ -262,10 +262,10 @@ export default function EventForm({ mode, initialData }: EventFormProps) {
   });
 
   // Effect to handle custom refund policy toggle
+  const refundPolicyValueFromWatch = form.watch("refundPolicy");
   useEffect(() => {
-    const refundPolicyValue = form.watch("refundPolicy");
-    setIsCustomRefundPolicy(refundPolicyValue ? !REFUND_POLICY_OPTIONS.includes(refundPolicyValue) : false);
-  }, [form.watch("refundPolicy")]);
+    setIsCustomRefundPolicy(refundPolicyValueFromWatch ? !REFUND_POLICY_OPTIONS.includes(refundPolicyValueFromWatch) : false);
+  }, [refundPolicyValueFromWatch]);
 
   // Watch isFreeEvent to update price fields
   const isFreeEvent = form.watch("isFreeEvent");
@@ -288,6 +288,7 @@ export default function EventForm({ mode, initialData }: EventFormProps) {
   // Watch form fields with type safety
   const organizerAbsorbsFees = form.watch("organizerAbsorbsFees") ?? false; // Default to false if undefined
   const ticketTypes = form.watch("ticketTypes");
+  const priceFromWatch = form.watch("price");
 
   // Update priceInfo for simple pricing and ticket types
   useEffect(() => {
@@ -313,7 +314,7 @@ export default function EventForm({ mode, initialData }: EventFormProps) {
         }
       });
     }
-  }, [organizerAbsorbsFees, usingTicketTypes, ticketTypes, form.watch("price"), form.watch("ticketTypes"), form, isFreeEvent]);
+  }, [organizerAbsorbsFees, usingTicketTypes, ticketTypes, priceFromWatch, form, isFreeEvent]);
 
   // Effect to handle isFreeEvent toggle
   useEffect(() => {

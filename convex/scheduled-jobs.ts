@@ -3,9 +3,12 @@
  * Copy these functions into your tickets.ts file.
  */
 
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { Id, Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { Id } from "./_generated/dataModel";
+
+const OFFER_EXPIRATION_PERIOD = 24 * 60 * 60 * 1000;
 
 /**
  * Cleanup expired ticket reservations in the waitingList table.
@@ -16,10 +19,13 @@ export const cleanupExpiredReservations = mutation({
   handler: async (ctx) => {
     // Find all waiting list entries that have expired
     const now = Date.now();
+    // Using filter instead of withIndex to avoid schema errors
     const expiredReservations = await ctx.db
       .query("waitingList")
-      .withIndex("by_status", (q) => q.eq("status", "reserved"))
-      .filter((q) => q.lt(q.field("offerExpiresAt"), now))
+      .filter((q) => 
+        q.eq(q.field("status"), "reserved") && 
+        q.lt(q.field("offerExpiresAt"), now)
+      )
       .collect();
     
     console.log(`Found ${expiredReservations.length} expired reservations to clean up`);
@@ -35,22 +41,30 @@ export const cleanupExpiredReservations = mutation({
       try {
         // Mark as expired in the waiting list
         await ctx.db.patch(reservation._id, {
-          status: "expired",
-          updatedAt: Date.now()
+          status: "expired"
         });
         
-        // Get the associated ticket type to update availability
-        const ticketType = await ctx.db.get(reservation.ticketTypeId as Id<"ticketTypes">);
-        
-        if (ticketType) {
-          // Increment available quantity
-          await ctx.db.patch(ticketType._id, {
-            quantity: (ticketType.quantity || 0) + (reservation.quantity || 1),
-            updatedAt: Date.now()
-          });
-          
-          results.ticketsReleased += (reservation.quantity || 1);
-        }
+        // Get the parent event to update ticket type availability
+        const event = await ctx.db.get(reservation.eventId);
+
+        if (event && event.ticketTypes && reservation.ticketTypeId) {
+          const ticketTypeIndex = event.ticketTypes.findIndex(tt => tt.id === reservation.ticketTypeId);
+          if (ticketTypeIndex !== -1) {
+            const updatedTicketTypes = [...event.ticketTypes];
+            const ticketTypeToUpdate = updatedTicketTypes[ticketTypeIndex];
+            
+            ticketTypeToUpdate.remaining += (reservation.quantity ?? 1);
+            if (ticketTypeToUpdate.remaining > ticketTypeToUpdate.quantity) {
+              ticketTypeToUpdate.remaining = ticketTypeToUpdate.quantity; // Cap at max quantity
+            }
+            ticketTypeToUpdate.isSoldOut = ticketTypeToUpdate.remaining <= 0;
+
+            await ctx.db.patch(event._id, {
+              ticketTypes: updatedTicketTypes,
+            });
+          }
+        }  
+        results.ticketsReleased += (reservation.quantity || 1);
         
         results.processed++;
       } catch (err) {
@@ -82,69 +96,92 @@ export const processWaitlist = mutation({
     // Find all events with a waitlist
     const eventsWithWaitlist = await ctx.db
       .query("waitingList")
-      .withIndex("by_status", (q) => q.eq("status", "waiting"))
+      .filter((q) => q.eq(q.field("status"), "waiting"))
       .collect();
     
+    // Sort events by creation time to process oldest first
+    eventsWithWaitlist.sort((a: Doc<"waitingList">, b: Doc<"waitingList">) => a._creationTime - b._creationTime);
+    
     // Group waiting list entries by event and ticket type
-    const waitlistByEventAndType = new Map();
+    const waitlistByEventAndType = new Map<string, Doc<"waitingList">[]>();
     
     for (const entry of eventsWithWaitlist) {
-      const key = `${entry.eventId}-${entry.ticketTypeId}`;
-      
-      if (!waitlistByEventAndType.has(key)) {
-        waitlistByEventAndType.set(key, []);
+      if (entry.ticketTypeId) { // Ensure ticketTypeId exists
+        const key = `${entry.eventId}-${entry.ticketTypeId}`;
+        if (!waitlistByEventAndType.has(key)) {
+          waitlistByEventAndType.set(key, []);
+        }
+        waitlistByEventAndType.get(key)!.push(entry);
       }
-      
-      waitlistByEventAndType.get(key).push(entry);
     }
     
-    // Process each event and ticket type combination
-    for (const [key, entries] of waitlistByEventAndType.entries()) {
-      const [eventId, ticketTypeId] = key.split('-');
+
+    
+    for (const [_key, entries] of waitlistByEventAndType.entries()) {
+      if (!entries || entries.length === 0) continue;
+      const firstEntryInGroup = entries[0];
+      const eventId = firstEntryInGroup.eventId;
+      const currentTicketTypeId = firstEntryInGroup.ticketTypeId;
+
+      if (!currentTicketTypeId) continue; // Should not happen due to earlier check
       
       try {
-        // Check current ticket availability
-        const ticketType = await ctx.db.get(ticketTypeId as Id<"ticketTypes">);
-        
-        if (!ticketType || ticketType.quantity <= 0) {
-          continue; // No tickets available
-        }
-        
-        // Sort waiting list entries by creation time (first come, first served)
-        entries.sort((a, b) => a._creationTime - b._creationTime);
-        
-        // Process waitlist entries up to available quantity or maxEntries
-        const entriesToProcess = entries.slice(0, Math.min(ticketType.quantity, maxEntries));
-        
-        for (const entry of entriesToProcess) {
-          // Mark the entry as notified
-          await ctx.db.patch(entry._id, {
-            status: "notified",
-            notifiedAt: Date.now(),
-            // Give them 24 hours to purchase
-            offerExpiresAt: Date.now() + 24 * 60 * 60 * 1000,
-            updatedAt: Date.now()
-          });
-          
-          // Here you would trigger a notification to the user
-          // This could be an email, SMS, or push notification
-          // For now, we'll just count it
-          
-          results.notified++;
-          results.processed++;
-          
-          if (!results.eventIds.includes(eventId)) {
-            results.eventIds.push(eventId);
+        // Get the parent event to update ticket type availability
+        const event = await ctx.db.get(eventId);
+
+        if (event && event.ticketTypes) {
+          const ticketTypeIndex = event.ticketTypes.findIndex((tt: typeof event.ticketTypes[0]) => tt.id === currentTicketTypeId);
+          if (ticketTypeIndex !== -1) {
+            const ticketType = event.ticketTypes[ticketTypeIndex];
+            
+            if (ticketType.remaining > 0) {
+              // Sort waiting list entries by creation time (first come, first served)
+              entries.sort((a: Doc<"waitingList">, b: Doc<"waitingList">) => a._creationTime - b._creationTime);
+              
+              // Process waitlist entries up to available remaining quantity or maxEntries
+              const entriesToProcessCount = Math.min(ticketType.remaining, entries.length, maxEntries);
+              const entriesToProcess = entries.slice(0, entriesToProcessCount);
+              
+              if (entriesToProcess.length > 0) {
+                const updatedTicketTypes = JSON.parse(JSON.stringify(event.ticketTypes)); // Deep copy
+                const offeredTicketType = updatedTicketTypes[ticketTypeIndex];
+                let numSuccessfullyOffered = 0;
+
+                for (const waitlistEntry of entriesToProcess) {
+                  if (!waitlistEntry.quantity || offeredTicketType.remaining < waitlistEntry.quantity) {
+                    // Not enough remaining for this specific request, or quantity is undefined
+                    continue;
+                  }
+
+                  // Offer the ticket to the user
+                  await ctx.db.patch(waitlistEntry._id, {
+                    status: "offered",
+                    offerExpiresAt: Date.now() + OFFER_EXPIRATION_PERIOD,
+                  });
+                  
+                  offeredTicketType.remaining -= waitlistEntry.quantity;
+                  numSuccessfullyOffered++;
+                  
+                  results.notified++;
+                  results.processed++;
+                  
+                  if (!results.eventIds.includes(eventId.toString())) { // eventId is Id<"events">, ensure it's string for array
+                    results.eventIds.push(eventId.toString());
+                  }
+                }
+
+                if (numSuccessfullyOffered > 0) {
+                    offeredTicketType.isSoldOut = offeredTicketType.remaining <= 0;
+                    await ctx.db.patch(event._id, {
+                        ticketTypes: updatedTicketTypes,
+                    });
+                }
+              }
+            }
           }
         }
-        
-        // Update available quantity
-        await ctx.db.patch(ticketType._id, {
-          quantity: ticketType.quantity - entriesToProcess.length,
-          updatedAt: Date.now()
-        });
       } catch (err) {
-        console.error(`Error processing waitlist for ${key}:`, err);
+        console.error(`Error processing waitlist for event ${eventId}, ticket type ${currentTicketTypeId}:`, err);
         results.errors++;
       }
     }

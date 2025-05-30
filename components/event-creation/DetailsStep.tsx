@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import { EventFormData } from '@/app/create-event/page';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -393,7 +394,7 @@ const DetailsStep: React.FC<DetailsStepProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                     {generalImagePreviewUrls.map((url, index) => (
                       <div key={index} className="relative group aspect-square bg-[#2C2C2C] rounded-md overflow-hidden">
-                        <img src={url} alt={`Preview ${index + 1}`} className="w-full h-full object-cover" />
+                        <Image src={url} alt={`Preview ${index + 1}`} layout="fill" objectFit="cover" className="rounded-md" />
                         <Button variant="destructive" size="icon" 
                                 onClick={() => removeFile('generalImageFiles', index)} 
                                 className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 hover:bg-red-600/80">

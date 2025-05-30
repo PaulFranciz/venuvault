@@ -47,6 +47,10 @@ export default function TicketSelectionModal({
     cancelReservation,
     setSelectedTicket
   } = useTicketStore();
+
+  // Hook calls must be at the top level, before any conditionals or early returns
+  const thumbnailId = event?.thumbnailImageStorageId;
+  const imageUrl = useStorageUrl(thumbnailId);
   
   // Local state for UI interaction
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -180,9 +184,7 @@ export default function TicketSelectionModal({
     }
   };
 
-  // Hook calls must be at the top level, before any conditionals
-  const thumbnailId = event?.thumbnailImageStorageId;
-  const imageUrl = useStorageUrl(thumbnailId);
+  // Format event date
   
   // Format event date
   let formattedDate = "TBA";

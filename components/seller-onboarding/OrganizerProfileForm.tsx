@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "convex/react";
+import Image from "next/image";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -205,7 +206,15 @@ export default function OrganizerProfileForm({ onSubmit, onBack, initialData }: 
         >
           {currentPreview ? (
             <>
-              <img src={currentPreview} alt="Preview" className="max-h-full max-w-full object-contain rounded-md" />
+              <div className="relative w-full h-full">
+                <Image 
+                  src={currentPreview} 
+                  alt="Preview" 
+                  layout="fill" 
+                  objectFit="contain" 
+                  className="rounded-md" 
+                />
+              </div>
               <div className="absolute top-2 right-2 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button 
                   type="button"

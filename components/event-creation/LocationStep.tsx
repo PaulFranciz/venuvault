@@ -37,7 +37,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
   };
   
   // Function to analyze and categorize the virtual link
-  const analyzeVirtualLink = (url: string) => {
+  const analyzeVirtualLink = React.useCallback((url: string) => {
     if (!url.trim()) {
       setLinkPreview(null);
       return;
@@ -105,7 +105,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
         isValid
       });
     }
-  };
+  }, [setLinkPreview]);
   
   // Initialize preview on component mount if virtual link exists
   React.useEffect(() => {

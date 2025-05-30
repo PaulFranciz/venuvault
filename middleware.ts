@@ -7,27 +7,57 @@ const isPublicRoute = createRouteMatcher([
   '/event/(.*)', // Allow individual event pages
   '/sign-in(.*)', // Clerk sign-in routes
   '/sign-up(.*)', // Clerk sign-up routes
-  '/api/webhooks/paystack(.*)', // Paystack webhook (ensure this doesn't need auth itself)
+  '/api/webhooks/paystack(.*)', // Paystack webhook
   '/validate-ticket/(.*)', // Ticket validation page
   '/creators/overview', // Creator landing page
   '/creators/(.*)', // All creators pages
-  // '/create-event', // Removed to make it a protected route
+  '/images/(.*)', // Allow all image paths
+  '/favicon.ico', // Allow favicon
+  '/_next/(.*)', // Allow Next.js static assets
+  '/discover', // Public event discovery page
+  '/about', // About page
+  '/features', // Features page
+  '/pricing', // Pricing page
+  '/blog', // Blog page
+  '/search', // Search page
 ]);
 
-export default clerkMiddleware((auth, req: NextRequest) => {
-  // If it's not a public route, then it's a protected route.
-  if (!isPublicRoute(req)) {
-    auth.protect();
+export default clerkMiddleware(async (auth, req: NextRequest) => {
+  const url = req.nextUrl.pathname;
+  
+  // Skip middleware for static files, images, and api routes
+  if (
+    url.includes('/_next/') || 
+    url.includes('/images/') || 
+    url.endsWith('.ico') || 
+    url.endsWith('.png') || 
+    url.endsWith('.svg') || 
+    url.endsWith('.jpg') || 
+    url.endsWith('.jpeg') || 
+    url.endsWith('.webp')
+  ) {
+    return NextResponse.next();
   }
-  // Allow the request to proceed if it's public or if auth.protect() doesn't redirect
+  
+  // If it's not a public route, then it's a protected route
+  if (!isPublicRoute(req)) {
+    // Check if user is authenticated
+    const session = await auth();
+    if (!session.userId) {
+      // Redirect to homepage with a sign-in parameter
+      // Your app uses modal sign-in rather than dedicated pages
+      const homeUrl = new URL('/', req.url);
+      homeUrl.searchParams.set('sign_in', 'true');
+      homeUrl.searchParams.set('redirect_url', req.url);
+      return NextResponse.redirect(homeUrl);
+    }
+  }
+  // Allow the request to proceed if it's public or if user is authenticated
   return NextResponse.next();
 });
 
 export const config = {
   matcher: [
-    // Skip Next.js internals, static files, and API routes generally,
-    // unless API routes are specifically meant to be protected by this logic.
-    // The /api/webhooks/paystack is explicitly public.
     '/((?!.+\.[\w]+$|_next).*)', // Exclude files with extensions and _next
     '/', // Include root
     '/creators/:path*',

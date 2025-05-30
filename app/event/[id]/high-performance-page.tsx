@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Image from "next/image";
 import { Id } from "@/convex/_generated/dataModel";
 import { useEvent } from "@/hooks/queries/useEventQueries";
 import HighPerformancePurchaseTicket from "@/components/HighPerformancePurchaseTicket";
@@ -43,10 +44,11 @@ export default function HighPerformanceEventPage() {
           
           <div className="aspect-video bg-gray-200 rounded-lg overflow-hidden relative">
             {event.thumbnailImageStorageId ? (
-              <img 
+              <Image 
                 src={`/api/storage/${event.thumbnailImageStorageId}`}
                 alt={event.name}
-                className="object-cover w-full h-full"
+                fill
+                className="object-cover"
               />
             ) : (
               <div className="flex items-center justify-center h-full bg-gray-100 text-gray-500">

@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Plus, CalendarDays, TrendingUp, CreditCard, ArrowRight, Eye, Edit } from 'lucide-react';
 import Spinner from '@/components/Spinner';
@@ -363,10 +364,11 @@ const EventCard: React.FC<EventCardProps> = ({ event }) => {
       <div className="relative h-48 bg-gray-200">
         {imageUrl ? (
           <div className="relative h-full w-full">
-            <img 
+            <Image 
               src={imageUrl} 
-              alt={event.name} 
-              className="h-full w-full object-cover"
+              alt={event.name || 'Event'} 
+              layout="fill"
+              objectFit="cover"
             />
           </div>
         ) : (
