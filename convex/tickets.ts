@@ -248,3 +248,194 @@ export const confirmPayment = mutation({
     };
   },
 })
+
+/**
+ * Cleanup expired ticket reservations in the waitingList table.
+ * This mutation is meant to be called by a scheduled job.
+ */
+export const cleanupExpiredReservations = mutation({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      // Find all waiting list entries that have expired
+      const now = Date.now();
+      
+      // Query for reserved waiting list entries that have expired
+      const expiredReservations = await ctx.db
+        .query("waitingList")
+        .filter((q) => 
+          q.eq(q.field("status"), "reserved") && 
+          q.lt(q.field("offerExpiresAt"), now)
+        )
+        .collect();
+      
+      console.log(`Found ${expiredReservations.length} expired reservations to clean up`);
+      
+      const results = {
+        processed: 0,
+        errors: 0,
+        ticketsReleased: 0
+      };
+      
+      // Process each expired reservation
+      for (const reservation of expiredReservations) {
+        try {
+          // Mark as expired in the waiting list
+          await ctx.db.patch(reservation._id, {
+            status: "expired"
+          });
+          
+          // Get the associated ticket type to update availability
+          if (reservation.ticketTypeId) {
+            // Using any type to avoid schema errors
+            const ticketType: any = await ctx.db.get(reservation.ticketTypeId as any);
+            
+            if (ticketType && typeof ticketType.quantity === 'number') {
+              // Increment available quantity
+              await ctx.db.patch(ticketType._id, {
+                quantity: ticketType.quantity + (reservation.quantity || 1)
+              });
+              
+              results.ticketsReleased += (reservation.quantity || 1);
+            }
+          }
+          
+          results.processed++;
+        } catch (err) {
+          console.error(`Error processing expired reservation ${reservation._id}:`, err);
+          results.errors++;
+        }
+      }
+      
+      return results;
+    } catch (error) {
+      console.error('Error in cleanupExpiredReservations:', error);
+      return {
+        processed: 0,
+        errors: 1,
+        ticketsReleased: 0,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+});
+
+/**
+ * Process waitlist entries for events with available tickets.
+ * This mutation is meant to be called by a scheduled job.
+ */
+export const processWaitlist = mutation({
+  args: {
+    maxEntries: v.optional(v.number())
+  },
+  handler: async (ctx, { maxEntries = 50 }) => {
+    try {
+      const results = {
+        processed: 0,
+        notified: 0,
+        errors: 0,
+        eventIds: [] as string[]
+      };
+      
+      // Find all events with a waitlist
+      const eventsWithWaitlist = await ctx.db
+        .query("waitingList")
+        .filter((q) => q.eq(q.field("status"), "waiting"))
+        .collect();
+      
+      console.log(`Found ${eventsWithWaitlist.length} waitlist entries to process`);
+      
+      // Group waiting list entries by event and ticket type
+      const waitlistByEventAndType = new Map<string, any[]>();
+      
+      for (const entry of eventsWithWaitlist) {
+        // Make sure both IDs exist before using them
+        if (entry.eventId && entry.ticketTypeId) {
+          const key = `${entry.eventId}-${entry.ticketTypeId}`;
+          
+          if (!waitlistByEventAndType.has(key)) {
+            waitlistByEventAndType.set(key, []);
+          }
+          
+          waitlistByEventAndType.get(key)?.push(entry);
+        }
+      }
+      
+      // Process each event and ticket type combination
+      for (const [key, entries] of waitlistByEventAndType.entries()) {
+        const [eventIdStr, ticketTypeIdStr] = key.split('-');
+        
+        try {
+          // Skip if we don't have a valid ticket type ID
+          if (!ticketTypeIdStr) continue;
+          
+          // Get the ticket type document - using any type to avoid schema errors
+          // In a real implementation, you would use the proper type definition
+          const ticketType: any = await ctx.db.get(ticketTypeIdStr as any);
+          
+          // Skip if ticket type doesn't exist or has no available tickets
+          if (!ticketType || typeof ticketType.quantity !== 'number' || ticketType.quantity <= 0) {
+            continue;
+          }
+          
+          // Sort waiting list entries by creation time (first come, first served)
+          const sortedEntries = [...entries].sort((a, b) => 
+            (a._creationTime || 0) - (b._creationTime || 0)
+          );
+          
+          // Process waitlist entries up to available quantity or maxEntries
+          const entriesToProcess = sortedEntries.slice(0, Math.min(ticketType.quantity, maxEntries));
+          
+          for (const entry of entriesToProcess) {
+            try {
+              // Mark the entry as offered
+              await ctx.db.patch(entry._id, {
+                status: "offered",
+                // Set expiration 24 hours from now
+                offerExpiresAt: Date.now() + 24 * 60 * 60 * 1000
+              });
+              
+              // Here you would trigger a notification to the user through a separate system
+              
+              results.notified++;
+              results.processed++;
+              
+              if (eventIdStr && !results.eventIds.includes(eventIdStr)) {
+                results.eventIds.push(eventIdStr);
+              }
+            } catch (patchError) {
+              console.error(`Error updating waitlist entry ${entry._id}:`, patchError);
+              results.errors++;
+            }
+          }
+          
+          // Update available quantity
+          if (entriesToProcess.length > 0) {
+            try {
+              await ctx.db.patch(ticketType._id, {
+                quantity: ticketType.quantity - entriesToProcess.length
+              });
+            } catch (updateError) {
+              console.error(`Error updating ticket type quantity for ${ticketTypeIdStr}:`, updateError);
+              results.errors++;
+            }
+          }
+        } catch (err) {
+          console.error(`Error processing waitlist for ${key}:`, err);
+          results.errors++;
+        }
+      }
+      
+      return results;
+    } catch (error) {
+      console.error('Error in processWaitlist:', error);
+      return {
+        processed: 0,
+        notified: 0,
+        errors: 1,
+        eventIds: [],
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+});
