@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { MapPin, Globe, Video, Link2, AlertCircle, ExternalLink } from 'lucide-react';
+import { MapPin, Globe, Video, Link2, AlertCircle, ExternalLink, CheckCircle } from 'lucide-react';
 import { useEventForm } from '@/providers/EventFormProvider';
+import { toast } from 'sonner';
 
 interface LocationStepProps {
   onNext: () => void;
@@ -19,6 +20,8 @@ const LocationStep: React.FC<LocationStepProps> = ({
   isSubmitting,
 }) => {
   const { formData, setFormData } = useEventForm();
+  const [isVerifying, setIsVerifying] = React.useState(false);
+  const [isAddressVerified, setIsAddressVerified] = React.useState(false);
   const [linkPreview, setLinkPreview] = React.useState<{
     platform: 'zoom' | 'google-meet' | 'teams' | 'youtube' | 'other' | 'invalid';
     icon: React.ReactNode;
@@ -33,6 +36,11 @@ const LocationStep: React.FC<LocationStepProps> = ({
     
     if (name === 'virtualLink') {
       analyzeVirtualLink(value);
+    }
+    
+    // Reset verified status when address is changed
+    if (name === 'address') {
+      setIsAddressVerified(false);
     }
   };
   
@@ -107,6 +115,62 @@ const LocationStep: React.FC<LocationStepProps> = ({
     }
   }, [setLinkPreview]);
   
+  // Function to verify address using the OpenCage Geocoding API
+  const verifyAddress = React.useCallback(async () => {
+    if (!formData.address) return;
+    
+    setIsVerifying(true);
+    setIsAddressVerified(false);
+    
+    try {
+      // Use environment variable for the API key
+      const apiKey = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
+      
+      if (!apiKey) {
+        console.error('OpenCage API key is not set');
+        toast.error('API key is not configured. Please add it to your environment variables.');
+        return;
+      }
+      
+      const response = await fetch(
+        `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(formData.address)}&key=${apiKey}&limit=1`
+      );
+      
+      const data = await response.json();
+      
+      if (data.results && data.results.length > 0) {
+        const result = data.results[0];
+        const { components, formatted } = result;
+        
+        const updateData: Partial<EventFormData> = {
+          address: formatted || formData.address,
+          city: components.city || components.town || components.village || '',
+          state: components.state || components.county || '',
+          country: components.country || '',
+          zipCode: components.postcode || ''
+        };
+        
+        setFormData(updateData);
+        setIsAddressVerified(true);
+        
+        toast.success("Address verified", {
+          description: "Location details have been filled automatically.",
+        });
+      } else {
+        toast.error("Address not found", {
+          description: "Please check the address and try again.",
+        });
+      }
+    } catch (error) {
+      console.error('Error verifying address:', error);
+      toast.error("Verification failed", {
+        description: "There was an error verifying the address. Please try again.",
+      });
+    } finally {
+      setIsVerifying(false);
+    }
+  }, [formData.address, setFormData]);
+  
   // Initialize preview on component mount if virtual link exists
   React.useEffect(() => {
     if (formData.virtualLink) {
@@ -176,15 +240,31 @@ const LocationStep: React.FC<LocationStepProps> = ({
           <div className="space-y-4">
             <div>
               <Label htmlFor="address" className="block text-white mb-2">Address</Label>
-              <Input
-                id="address"
-                name="address"
-                value={formData.address || ''}
-                onChange={handleInputChange}
-                placeholder="Enter venue address"
-                className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
-                required
-              />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    id="address"
+                    name="address"
+                    value={formData.address || ''}
+                    onChange={handleInputChange}
+                    placeholder="Enter venue address"
+                    className={`bg-[#2C2C2C] border-[#3B3B3B] text-white pr-9 ${isAddressVerified ? 'border-green-500' : ''}`}
+                    required
+                  />
+                  {isAddressVerified && (
+                    <CheckCircle className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-green-500" />
+                  )}
+                </div>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={verifyAddress}
+                  disabled={!formData.address || isVerifying}
+                  className="bg-[#2C2C2C] border-[#3B3B3B] hover:bg-[#3B3B3B] hover:text-[#F96521]"
+                >
+                  {isVerifying ? 'Verifying...' : 'Verify'}
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
