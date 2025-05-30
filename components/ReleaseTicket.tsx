@@ -5,6 +5,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { XCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function ReleaseTicket({
   eventId,
@@ -14,32 +15,47 @@ export default function ReleaseTicket({
   waitingListId: Id<"waitingList">;
 }) {
   const [isReleasing, setIsReleasing] = useState(false);
-  const releaseTicket = useMutation(api.waitingList.releaseTicket);
+  const releaseTicketMutation = useMutation(api.waitingList.releaseTicket);
+  const { toast } = useToast();
 
-  const handleRelease = async () => {
-    if (!confirm("Are you sure you want to release your ticket offer?")) return;
-
+  const performRelease = async () => {
+    setIsReleasing(true);
     try {
-      setIsReleasing(true);
-      await releaseTicket({
+      await releaseTicketMutation({
         eventId,
         waitingListId,
       });
+      toast({
+        title: "Success",
+        description: "Ticket offer released successfully.",
+        variant: "default",
+      });
     } catch (error) {
-      console.error("Error releasing ticket:", error);
+      console.error("Error releasing ticket:", error); 
+      toast({
+        title: "Error",
+        description: "Failed to release ticket. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsReleasing(false);
     }
+  };
+
+  const handleRelease = () => {
+    // For now, let's just call performRelease directly without a confirmation
+    // We'll add a proper confirmation dialog later if needed
+    performRelease();
   };
 
   return (
     <button
       onClick={handleRelease}
       disabled={isReleasing}
-      className="mt-2 w-full flex items-center justify-center gap-2 py-2 px-4 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+      className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-red-600 text-white font-medium rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-red-700 shadow-sm"
     >
-      <XCircle className="w-4 h-4" />
-      {isReleasing ? "Releasing..." : "Release Ticket Offer"}
+      <XCircle className="w-5 h-5" />
+      {isReleasing ? "Releasing..." : "Release Ticket"}
     </button>
   );
 }

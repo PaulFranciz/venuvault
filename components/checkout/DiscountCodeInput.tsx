@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TicketCheck, Loader2 } from "lucide-react";
+import { TicketCheck, Loader2, BadgePercent } from "lucide-react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface DiscountCodeInputProps {
   eventId: string;
@@ -24,38 +28,63 @@ export default function DiscountCodeInput({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const validateDiscountCode = async () => {
+  // Use Convex's validateCode query directly - using skip option to only run when needed
+  const [validateCodeInput, setValidateCodeInput] = useState<string | null>(null);
+  
+  // Use Convex's validateCode query with skip option
+  const result = useQuery(
+    api.discountCodes.validateCode, 
+    validateCodeInput ? { code: validateCodeInput, eventId } : "skip"
+  );
+  
+  // Handle validation when result changes
+  useEffect(() => {
+    // Skip if we have no code to validate or if the query is still loading
+    if (!validateCodeInput || result === undefined) return;
+    
+    if (result && 'isValid' in result) {
+      setIsLoading(false);
+      
+      if (result.isValid && result.discountType && result.discountAmount !== undefined) {
+        const discountType = result.discountType as "percentage" | "fixed";
+        const discountText = discountType === "percentage" 
+          ? `${result.discountAmount}%` 
+          : `₦${result.discountAmount}`;
+        
+        setSuccess(`${discountText} discount applied!`);
+        toast.success("Discount code applied!", {
+          description: `Your ${discountText} discount has been applied to eligible items.`,
+          icon: <BadgePercent className="h-4 w-4" />
+        });
+        
+        onDiscountApplied({
+          code: result.code || '',
+          discountType: discountType,
+          discountAmount: result.discountAmount,
+          ticketTypeIds: result.ticketTypeIds
+        });
+      } else {
+        setError(result.message || "Invalid discount code");
+        toast.error("Invalid discount code", {
+          description: result.message || "The discount code you entered is not valid."
+        });
+      }
+      
+      // Clear validation input to prevent reprocessing
+      setValidateCodeInput(null);
+    }
+  }, [result, validateCodeInput, onDiscountApplied, eventId]);
+  
+  const validateDiscountCode = () => {
     if (!code.trim()) return;
     
     setIsLoading(true);
     setError(null);
     setSuccess(null);
     
-    try {
-      const response = await fetch(`/api/validate-discount?code=${encodeURIComponent(code)}&eventId=${eventId}`);
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to validate discount code");
-      }
-      
-      if (data.isValid) {
-        setSuccess(`${data.discountType === "percentage" ? data.discountAmount + "%" : "₦" + data.discountAmount} discount applied!`);
-        onDiscountApplied({
-          code: data.code,
-          discountType: data.discountType,
-          discountAmount: data.discountAmount,
-          ticketTypeIds: data.ticketTypeIds
-        });
-      } else {
-        setError(data.message || "Invalid discount code");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to validate code");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    // Set the validation input to trigger the query
+    setValidateCodeInput(code.trim());
+  }
 
   return (
     <div className="space-y-2">

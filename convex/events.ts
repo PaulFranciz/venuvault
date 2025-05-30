@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import { DURATIONS, WAITING_LIST_STATUS, TICKET_STATUS } from "./constants";
 import { api, components, internal } from "./_generated/api";
@@ -75,15 +75,39 @@ export const create = mutation({
         priceInfo: v.optional(v.string()), // Added priceInfo
       })
     )),
+    // Recurring Event Fields
+    isRecurring: v.optional(v.boolean()),
+    recurringFrequency: v.optional(v.union(
+      v.literal('daily'),
+      v.literal('weekly'),
+      v.literal('monthly')
+    )),
+    recurringInterval: v.optional(v.number()),
+    recurringDaysOfWeek: v.optional(v.array(v.string())),
+    recurringDayOfMonth: v.optional(v.number()),
+    recurringEndDate: v.optional(v.number()), // Timestamp
+    scheduledPublishTime: v.optional(v.number()), // Timestamp for scheduled publish
+    imageStorageId: v.optional(v.id("_storage")), // For banner/main event image
+    thumbnailImageStorageId: v.optional(v.id("_storage")) // For event card thumbnail
   },
   handler: async (ctx, args) => {
     const { 
       name, description, location, eventDate, price, totalTickets, userId,
       locationTips, endDate, startTime, endTime, timezone, category,
-      isPublished, inviteOnly, refundPolicy, organizerAbsorbsFees, ticketTypes,
-      isFreeEvent // Added isFreeEvent
+      isPublished, // This can now be explicitly set (e.g., to false for drafts)
+      inviteOnly, refundPolicy, organizerAbsorbsFees, ticketTypes,
+      isFreeEvent,
+      // Destructure recurring event fields
+      isRecurring, recurringFrequency, recurringInterval, recurringDaysOfWeek, 
+      recurringDayOfMonth, recurringEndDate,
+      scheduledPublishTime, // Destructure scheduledPublishTime
+      imageStorageId, // Destructure imageStorageId
+      thumbnailImageStorageId // Destructure thumbnailImageStorageId
     } = args;
     
+    // Default isPublished to true if not provided, otherwise use the provided value.
+    const finalIsPublished = isPublished === undefined ? true : isPublished;
+
     const eventId = await ctx.db.insert("events", {
       name,
       description,
@@ -92,6 +116,7 @@ export const create = mutation({
       price,
       totalTickets,
       userId,
+      isPublished: finalIsPublished, // Use the determined isPublished state
       // Include new fields if they're defined
       ...(locationTips !== undefined && { locationTips }),
       ...(endDate !== undefined && { endDate }),
@@ -99,12 +124,22 @@ export const create = mutation({
       ...(endTime !== undefined && { endTime }),
       ...(timezone !== undefined && { timezone }),
       ...(category !== undefined && { category }),
-      ...(isPublished !== undefined && { isPublished }),
+      // ...(isPublished !== undefined && { isPublished }), // Handled by finalIsPublished
       ...(inviteOnly !== undefined && { inviteOnly }),
       ...(refundPolicy !== undefined && { refundPolicy }),
       ...(organizerAbsorbsFees !== undefined && { organizerAbsorbsFees }),
-      ...(isFreeEvent !== undefined && { isFreeEvent }), // Added isFreeEvent
+      ...(isFreeEvent !== undefined && { isFreeEvent }), 
       ...(ticketTypes !== undefined && { ticketTypes }),
+      // Include recurring event fields if they're defined
+      ...(isRecurring !== undefined && { isRecurring }),
+      ...(recurringFrequency !== undefined && { recurringFrequency }),
+      ...(recurringInterval !== undefined && { recurringInterval }),
+      ...(recurringDaysOfWeek !== undefined && { recurringDaysOfWeek }),
+      ...(recurringDayOfMonth !== undefined && { recurringDayOfMonth }),
+      ...(recurringEndDate !== undefined && { recurringEndDate }),
+      ...(scheduledPublishTime !== undefined && { scheduledPublishTime }), // Add scheduledPublishTime
+      ...(imageStorageId !== undefined && { imageStorageId }), // Add imageStorageId
+      ...(thumbnailImageStorageId !== undefined && { thumbnailImageStorageId }) // Add thumbnailImageStorageId
     });
     return eventId;
   },
@@ -459,19 +494,68 @@ export const getEventAvailability = query({
 export const search = query({
   args: { searchTerm: v.string() },
   handler: async (ctx, { searchTerm }) => {
+    if (!searchTerm.trim()) return [];
+    
     const events = await ctx.db
       .query("events")
       .filter((q) => q.eq(q.field("is_cancelled"), undefined))
       .collect();
 
-    return events.filter((event) => {
-      const searchTermLower = searchTerm.toLowerCase();
+    // Filter events based on search term
+    return events
+      .filter((event) => {
+        const searchTermLower = searchTerm.toLowerCase();
+        return (
+          event.name.toLowerCase().includes(searchTermLower) ||
+          event.description.toLowerCase().includes(searchTermLower) ||
+          event.location.toLowerCase().includes(searchTermLower)
+        );
+      })
+      .map(event => ({
+        _id: event._id,
+        name: event.name,
+        location: event.location,
+        eventDate: event.eventDate,
+        // Return image information for thumbnails
+        imageStorageId: event.imageStorageId,
+        thumbnailImageStorageId: event.thumbnailImageStorageId
+      }));
+  },
+});
+
+// Check if user has published any events (used for role-based navigation)
+export const hasUserPublishedEvents = query({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    // Handle case where userId is not provided or invalid
+    if (!userId || typeof userId !== "string" || userId.trim() === "") {
+      return false;
+    }
+
+    // Get any events by this user
+    const userEvents = await ctx.db
+      .query("events")
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .collect();
+    
+    // No events at all means definitely not a creator
+    if (!userEvents || userEvents.length === 0) {
+      return false;
+    }
+    
+    // Filter for published events
+    const publishedEvents = userEvents.filter(event => {
+      // Safely check optional fields
       return (
-        event.name.toLowerCase().includes(searchTermLower) ||
-        event.description.toLowerCase().includes(searchTermLower) ||
-        event.location.toLowerCase().includes(searchTermLower)
+        (event && event.isPublished === true) || 
+        (event && 
+         event.isHiddenFromHome !== true && 
+         event.is_cancelled !== true)
       );
     });
+    
+    // Return true if there's at least one published event
+    return publishedEvents.length > 0;
   },
 });
 
@@ -554,64 +638,34 @@ export const updateEvent = mutation({
         priceInfo: v.optional(v.string()), // Added priceInfo
       })
     )),
+    // SEO and Social Sharing
+    seoTitle: v.optional(v.string()),
+    seoDescription: v.optional(v.string()),
+    socialShareImageId: v.optional(v.id("_storage")),
+    // Media and Display related fields (already have imageStorageId)
+    thumbnailImageStorageId: v.optional(v.id("_storage")) // Add thumbnailImageStorageId here too
   },
   handler: async (ctx, args) => {
-    const { eventId, ...updates } = args;
+    const { eventId, ...updateData } = args;
 
-    // Get current event to check tickets sold
-    const event = await ctx.db.get(eventId);
-    if (!event) throw new Error("Event not found");
+    // Ensure that fields like ticketTypes are handled correctly if they are part of updateData
+    // For example, if ticketTypes is undefined in args, it shouldn't wipe out existing ticketTypes.
+    // The spread operator for updateData should handle this correctly if convex partial updates work as expected.
 
-    const soldTickets = await ctx.db
-      .query("tickets")
-      .withIndex("by_event", (q) => q.eq("eventId", eventId))
-      .filter((q) =>
-        q.or(q.eq(q.field("status"), "valid"), q.eq(q.field("status"), "used"))
-      )
-      .collect();
-
-    // Ensure new total tickets is not less than sold tickets
-    if (updates.totalTickets < soldTickets.length) {
-      throw new Error(
-        `Cannot reduce total tickets below ${soldTickets.length} (number of tickets already sold)`
-      );
+    const existingEvent = await ctx.db.get(eventId);
+    if (!existingEvent) {
+      throw new ConvexError("Event not found.");
     }
 
-    // For ticket types, ensure we're not reducing below sold count per type
-    if (updates.ticketTypes) {
-      // If we have ticket types in the updates
-      const existingTickets = await ctx.db
-        .query("tickets")
-        .withIndex("by_event", (q) => q.eq("eventId", eventId))
-        .filter((q) =>
-          q.or(q.eq(q.field("status"), "valid"), q.eq(q.field("status"), "used"))
-        )
-        .collect();
-      
-      // Count sold tickets by ticket type
-      const soldByType: Record<string, number> = {};
-      existingTickets.forEach(ticket => {
-        if (ticket.ticketTypeId) {
-          soldByType[ticket.ticketTypeId] = (soldByType[ticket.ticketTypeId] || 0) + 1;
-        }
-      });
-      
-      // Check each type's quantity
-      for (const type of updates.ticketTypes) {
-        const soldForType = soldByType[type.id] || 0;
-        if (type.quantity < soldForType) {
-          throw new Error(
-            `Cannot reduce "${type.name}" ticket type quantity below ${soldForType} (already sold)`
-          );
-        }
-        
-        // Update the remaining count based on sold tickets
-        type.remaining = type.quantity - soldForType;
-      }
-    }
+    // Optional: Add authorization check here to ensure only the event owner can update it
+    // const identity = await ctx.auth.getUserIdentity();
+    // if (!identity || existingEvent.userId !== identity.subject) {
+    //   throw new ConvexError("You are not authorized to update this event.");
+    // }
 
-    await ctx.db.patch(eventId, updates);
-    return eventId;
+    await ctx.db.patch(eventId, updateData);
+    console.log(`Event ${eventId} updated successfully.`);
+    return { success: true, eventId };
   },
 });
 
@@ -619,24 +673,56 @@ export const updateEvent = mutation({
 export const cancelEvent = mutation({
   args: { eventId: v.id("events") },
   handler: async (ctx, { eventId }) => {
-    // Simply mark the event as cancelled
-    // Refund logic will be handled by a separate server action
-    await ctx.db.patch(eventId, { is_cancelled: true });
+    const event = await ctx.db.get(eventId);
+    if (!event) {
+      throw new ConvexError("Event not found");
+    }
 
-    // Optionally: Update associated tickets to 'cancelled' status
-    const tickets = await ctx.db
-      .query("tickets")
-      .withIndex("by_event", (q) => q.eq("eventId", eventId))
-      .filter((q) => q.eq(q.field("status"), TICKET_STATUS.VALID))
+    // Optionally, add logic to check if the user is authorized to cancel the event
+    // For example, if (event.userId !== ctx.auth.userId) throw new ConvexError("Unauthorized");
+
+    await ctx.db.patch(eventId, { is_cancelled: true, isPublished: false });
+
+    // Optionally, notify users on the waiting list or ticket holders
+    // This could involve another internal function call
+    // await ctx.scheduler.runAfter(0, internal.notifications.notifyEventCancelled, { eventId });
+
+    return { success: true, message: "Event cancelled successfully" };
+  },
+});
+
+// Internal mutation for the cron job to publish scheduled events
+export const publishScheduledEvents = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+
+    // Find events that are not published and whose scheduled time has passed
+    const eventsToPublish = await ctx.db
+      .query("events")
+      .filter((q) => 
+        q.and(
+          q.eq(q.field("isPublished"), false),
+          q.lte(q.field("scheduledPublishTime"), now) // Ensure scheduledPublishTime is not null
+        )
+      )
       .collect();
 
-    await Promise.all(
-      tickets.map((ticket) =>
-        ctx.db.patch(ticket._id, { status: TICKET_STATUS.CANCELLED })
-      )
-    );
+    if (eventsToPublish.length === 0) {
+      console.log("No events to publish at this time.");
+      return { publishedCount: 0, message: "No events to publish." };
+    }
 
-    // Note: We don't process the waiting list here. 
-    // Users on the waiting list for a cancelled event will simply not progress.
+    let publishedCount = 0;
+    for (const event of eventsToPublish) {
+      // Double check scheduledPublishTime, though the query should handle it.
+      // This also handles cases where scheduledPublishTime might be null/undefined if schema allows
+      if (event.scheduledPublishTime && event.scheduledPublishTime <= now) {
+        await ctx.db.patch(event._id, { isPublished: true });
+        publishedCount++;
+      }
+    }
+    console.log(`Successfully published ${publishedCount} event(s).`);
+    return { publishedCount, message: `Successfully published ${publishedCount} event(s).` };
   },
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -13,18 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { 
-  ArrowLeft, 
-  Ticket, 
-  CreditCard, 
-  Info, 
-  Plus, 
-  Trash2, 
-  BadgePercent,
-  Loader2
-} from "lucide-react";
+import { BadgePercent, CreditCard, Loader2, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import DiscountCodeInput from "@/components/checkout/DiscountCodeInput";
+import Image from "next/image";
+import { useStorageUrl } from "@/lib/utils";
+import { dialCodes } from "@/lib/dialCodes";
+import CountUp from "react-countup";
 
 interface TicketRecipient {
   name: string;
@@ -42,160 +37,250 @@ export default function CheckoutPage() {
   const { id } = useParams();
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
-  
-  const event = useQuery(api.events.getById, { 
-    eventId: id as Id<"events"> 
-  });
-  
+
+  const event = useQuery(api.events.getById, { eventId: id as Id<"events"> });
+
   const queuePosition = useQuery(api.waitingList.getQueuePosition, {
     eventId: id as Id<"events">,
     userId: user?.id ?? "",
   });
-  
+
+  // Always fetch event image URL to maintain consistent hook order
+  const imageUrl = useStorageUrl(event?.thumbnailImageStorageId || event?.imageStorageId);
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [dialCode, setDialCode] = useState("+234"); // default Nigeria
   const [isAgreedToTerms, setIsAgreedToTerms] = useState(false);
   const [recipients, setRecipients] = useState<TicketRecipient[]>([]);
   const [sendToOthers, setSendToOthers] = useState(false);
   const [discount, setDiscount] = useState<DiscountInfo | null>(null);
+  const [originalTotal, setOriginalTotal] = useState<number>(0);
+  const [animatePrices, setAnimatePrices] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // Calculate ticket details
-  const ticketTypeId = queuePosition?.ticketTypeId;
-  const quantity = queuePosition?.quantity || 1;
-  
-  let ticketPrice = event?.price || 0;
-  let ticketName = "General Admission";
-  
-  if (ticketTypeId && event?.ticketTypes) {
-    const selectedType = event.ticketTypes.find(type => type.id === ticketTypeId);
-    if (selectedType) {
-      ticketPrice = selectedType.price;
-      ticketName = selectedType.name;
+
+  // Setup empty arrays for multiple tickets
+  const [selectedTickets, setSelectedTickets] = useState<
+    Array<{ id: string; name: string; price: number; quantity: number }>
+  >([]);
+
+  // Store URL params in ref to prevent recomputation on each render
+  const searchParamsRef = useRef<{
+    ticketTypes: string[];
+    quantities: string[];
+    isUsingUrlParams: boolean;
+  }>({ ticketTypes: [], quantities: [], isUsingUrlParams: false });
+
+  // Get URL search params once during initial render
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const ticketTypes = searchParams.getAll("ticketTypes[]");
+      const quantities = searchParams.getAll("quantities[]");
+
+      searchParamsRef.current = {
+        ticketTypes,
+        quantities,
+        isUsingUrlParams: ticketTypes.length > 0,
+      };
+
+      // Force a re-render after setting up the search params
+      setSelectedTickets([]);
     }
-  }
-  
-  // Check if event is free
-  const isFreeEvent = ticketPrice === 0;
-  
-  // Calculate discount
-  const calculateDiscount = (price: number) => {
+  }, []);
+
+  // Load ticket details either from URL or queuePosition
+  useEffect(() => {
+    if (!event || !event.ticketTypes) return;
+
+    const { ticketTypes, quantities, isUsingUrlParams } = searchParamsRef.current;
+
+    // Prevent unnecessary re-renders
+    if (selectedTickets.length > 0) return;
+
+    if (isUsingUrlParams) {
+      // Multiple tickets from URL parameters
+      const ticketsFromUrl = ticketTypes.map((typeId, index) => {
+        const quantity = parseInt(quantities[index] || "1", 10);
+        const ticketType = event.ticketTypes?.find((t) => t.id === typeId);
+
+        return {
+          id: typeId,
+          name: ticketType?.name || "Ticket",
+          price: ticketType?.price || 0,
+          quantity: quantity,
+        };
+      });
+
+      if (ticketsFromUrl.length > 0) {
+        setSelectedTickets(ticketsFromUrl);
+      }
+    } else if (queuePosition?.ticketTypeId) {
+      // Single ticket from queue position
+      const ticketType = event.ticketTypes.find((t) => t.id === queuePosition.ticketTypeId);
+      if (ticketType) {
+        setSelectedTickets([
+          {
+            id: ticketType.id,
+            name: ticketType.name,
+            price: ticketType.price,
+            quantity: queuePosition.quantity || 1,
+          },
+        ]);
+      }
+    }
+  }, [event, queuePosition, selectedTickets.length]);
+
+  // Simple variables for backward compatibility
+  const ticketTypeId = searchParamsRef.current.isUsingUrlParams
+    ? searchParamsRef.current.ticketTypes[0]
+    : queuePosition?.ticketTypeId;
+  const quantity = searchParamsRef.current.isUsingUrlParams
+    ? parseInt(searchParamsRef.current.quantities[0] || "1", 10)
+    : queuePosition?.quantity || 1;
+
+  // Check if all tickets are free
+  const isFreeEvent = selectedTickets.length > 0 && selectedTickets.every((ticket) => ticket.price === 0);
+
+  // Calculate discount for a specific ticket type
+  const calculateDiscountForTicket = (ticketTypeId: string, price: number) => {
     if (!discount) return 0;
-    
+
     // Check if discount applies to this ticket type
     if (discount.ticketTypeIds && discount.ticketTypeIds.length > 0) {
       if (!ticketTypeId || !discount.ticketTypeIds.includes(ticketTypeId)) {
         return 0;
       }
     }
-    
+
     if (discount.discountType === "percentage") {
       return price * (discount.discountAmount / 100);
     } else {
       return Math.min(price, discount.discountAmount); // Don't discount more than the ticket price
     }
   };
-  
-  const discountAmount = calculateDiscount(ticketPrice) * quantity;
-  
-  // Calculate total
-  const subtotal = ticketPrice * quantity;
+
+  // Calculate subtotal, discounts and total
+  const subtotal = selectedTickets.reduce((sum, ticket) => {
+    return sum + ticket.price * ticket.quantity;
+  }, 0);
+
+  const discountAmount = selectedTickets.reduce((sum, ticket) => {
+    return sum + calculateDiscountForTicket(ticket.id, ticket.price) * ticket.quantity;
+  }, 0);
+
   const total = subtotal - discountAmount;
-  
+
   // Initialize with user data when available
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
       setFullName(user.fullName || "");
       setEmail(user.primaryEmailAddress?.emailAddress || "");
-      
+
       // Initialize the first recipient with the user's info
       if (quantity > 1 && recipients.length === 0) {
-        const initialRecipients: TicketRecipient[] = [{
-          name: user.fullName || "",
-          email: user.primaryEmailAddress?.emailAddress || ""
-        }];
-        
+        const initialRecipients: TicketRecipient[] = [
+          {
+            name: user.fullName || "",
+            email: user.primaryEmailAddress?.emailAddress || "",
+          },
+        ];
+
         // Add empty slots for additional recipients
         for (let i = 1; i < quantity; i++) {
           initialRecipients.push({ name: "", email: "" });
         }
-        
+
         setRecipients(initialRecipients);
       }
     }
   }, [isLoaded, isSignedIn, user, quantity, recipients.length]);
-  
+
   const handleAddRecipient = () => {
     if (recipients.length < quantity) {
       setRecipients([...recipients, { name: "", email: "" }]);
     }
   };
-  
+
   const handleRemoveRecipient = (index: number) => {
     const newRecipients = [...recipients];
     newRecipients.splice(index, 1);
     setRecipients(newRecipients);
   };
-  
+
   const handleRecipientChange = (index: number, field: keyof TicketRecipient, value: string) => {
     const newRecipients = [...recipients];
     newRecipients[index] = { ...newRecipients[index], [field]: value };
     setRecipients(newRecipients);
   };
-  
+
   const handleDiscountApplied = (discountInfo: DiscountInfo) => {
+    // Store current total before applying discount for animation
+    setOriginalTotal(total);
     setDiscount(discountInfo);
+    // Trigger animation
+    setAnimatePrices(true);
   };
-  
+
   const handleSubmit = async () => {
     if (!isAgreedToTerms) {
       setError("You must agree to the terms and conditions");
       return;
     }
-    
+
     if (!fullName || !email) {
       setError("Please fill in all required fields");
       return;
     }
-    
-    // Validate recipients if sending to others
-    if (sendToOthers && recipients.length > 0) {
-      const isValid = recipients.every(r => r.name.trim() && r.email.trim());
-      if (!isValid) {
-        setError("Please fill in all recipient information");
-        return;
+
+    setIsLoading(true);
+    setError(null);
+
+    // If sending tickets to others, validate their info
+    if (sendToOthers) {
+      for (const recipient of recipients) {
+        if (!recipient.name || !recipient.email) {
+          setError("Please fill out all recipient information");
+          setIsLoading(false);
+          return;
+        }
       }
     }
-    
-    setError(null);
-    setIsLoading(true);
-    
+
+    // Check if we have tickets selected
+    if (selectedTickets.length === 0) {
+      setError("No tickets selected. Please try again.");
+      setIsLoading(false);
+      return;
+    }
+
+    // Prepare tickets data for payment processing
+    const ticketsData = selectedTickets.map((ticket) => ({
+      ticketTypeId: ticket.id,
+      quantity: ticket.quantity,
+      price: ticket.price,
+    }));
+
+    // Process payment via Paystack
     try {
-      // For free tickets, we would implement a different flow
-      if (isFreeEvent) {
-        // TODO: Implement free ticket reservation
-        // For now, just redirect to success page
-        router.push("/tickets?success=true");
-        return;
-      }
-      
-      // For paid tickets, initialize Paystack
+      const fullPhone = `${dialCode}${phoneNumber.replace(/^0+/, "")}`;
+
       const result = await initializePaystackTransaction({
         eventId: id as Id<"events">,
-        ticketTypeId,
-        quantity,
+        tickets: selectedTickets.map((t) => ({ ticketTypeId: t.id, quantity: t.quantity })),
         discountCode: discount?.code,
         customerInfo: {
           name: fullName,
-          email,
-          phone: phoneNumber,
+          email: email,
+          phone: fullPhone,
         },
-        recipients: sendToOthers ? recipients : undefined
+        recipients: sendToOthers ? recipients : undefined,
       });
-      
+
       if (result?.authorizationUrl) {
+        console.log("Payment initialized, redirecting to:", result.authorizationUrl);
         window.location.href = result.authorizationUrl;
       } else {
         throw new Error("Failed to initialize payment");
@@ -206,264 +291,288 @@ export default function CheckoutPage() {
       setIsLoading(false);
     }
   };
-  
-  if (!event || !isLoaded || !queuePosition) {
+
+  if (!event || !isLoaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
         <Spinner />
       </div>
     );
   }
-  
-  // Verify if user has a valid offer
-  if (queuePosition?.status !== "offered") {
+
+  // Verify we're using URL params or have a valid queue position
+  if (!searchParamsRef.current.isUsingUrlParams && (!queuePosition || queuePosition?.status !== "offered")) {
     router.push(`/event/${id}`);
     return null;
   }
-  
+
+  // Format event date as "Sun 1 June | 2pm"
+  let formattedDate = "TBA";
+  if (event && event.eventDate) {
+    const startDate = new Date(event.eventDate);
+    const day = startDate.toLocaleDateString("en-US", { weekday: "short" });
+    const dayNum = startDate.getDate();
+    const month = startDate.toLocaleDateString("en-US", { month: "long" });
+    const hours = startDate.getHours();
+    const ampm = hours >= 12 ? "pm" : "am";
+    const formattedHours = hours % 12 || 12;
+
+    formattedDate = `${day} ${dayNum} ${month} | ${formattedHours}${ampm}`;
+  }
+
+  // Format currency for display
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: "NGN",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount).replace("NGN", "₦");
+  };
+
   return (
-    <div className="bg-gray-50 min-h-screen py-8">
-      <div className="max-w-5xl mx-auto px-4">
-        <div className="mb-6">
-          <Link 
-            href={`/event/${id}`}
-            className="inline-flex items-center text-gray-600 hover:text-gray-900"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            <span>Back to Event</span>
-          </Link>
-        </div>
-        
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Checkout
-        </h1>
-        <p className="text-gray-600 mb-8">
-          Complete your purchase for {event.name}
-        </p>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left column - Form */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Purchaser Information */}
-            <div className="bg-white p-6 rounded-lg shadow-sm">
-              <h2 className="text-xl font-semibold mb-4">Your Information</h2>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="fullName">Full Name</Label>
-                  <Input
-                    id="fullName"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="phone">Phone Number (Optional)</Label>
-                  <Input
-                    id="phone"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                  />
-                </div>
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      {/* Breadcrumb */}
+      <nav className="text-sm text-gray-600 mb-6 space-x-1">
+        <Link href="/" className="hover:underline">
+          Explore Events
+        </Link>
+        <span>/</span>
+        <Link href={`/event/${id}`} className="hover:underline truncate max-w-xs inline-block align-baseline">
+          {event.name}
+        </Link>
+        <span>/</span>
+        <span className="text-red-600 font-semibold">Checkout</span>
+      </nav>
+
+      <h1 className="text-2xl font-semibold mb-6">Contact Information</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {/* Left column – Form */}
+        <div className="md:col-span-2 space-y-8">
+          {/* Contact Fields */}
+          <div className="space-y-4 bg-white p-6 shadow rounded border border-gray-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="firstName">First name</Label>
+                <Input
+                  id="firstName"
+                  value={fullName.split(" ")[0] ?? ""}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Enter your first name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="lastName">Last name</Label>
+                <Input
+                  id="lastName"
+                  value={fullName.split(" ").slice(1).join(" ") ?? ""}
+                  onChange={() => {}}
+                  placeholder="Enter your last name"
+                />
               </div>
             </div>
-            
-            {/* Ticket Recipients - only for multiple tickets */}
-            {quantity > 1 && (
-              <div className="bg-white p-6 rounded-lg shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold">Ticket Recipients</h2>
-                  
-                  <div className="flex items-center">
-                    <Checkbox
-                      id="sendToOthers"
-                      checked={sendToOthers}
-                      onCheckedChange={(checked) => setSendToOthers(!!checked)}
-                    />
-                    <Label htmlFor="sendToOthers" className="ml-2">
-                      Send tickets to different email addresses
-                    </Label>
-                  </div>
-                </div>
-                
-                {sendToOthers && (
-                  <div className="space-y-4">
-                    <p className="text-sm text-gray-600">
-                      Tickets will only be sent to the email addresses you provide here.
-                    </p>
-                    
-                    {recipients.map((recipient, index) => (
-                      <div key={index} className="border border-gray-200 rounded-md p-4">
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="font-medium">Recipient {index + 1}</span>
-                          
-                          {index > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveRecipient(index)}
-                            >
-                              <Trash2 className="w-4 h-4 text-red-500" />
-                            </Button>
-                          )}
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <Label htmlFor={`name-${index}`}>Name</Label>
-                            <Input
-                              id={`name-${index}`}
-                              value={recipient.name}
-                              onChange={(e) => handleRecipientChange(index, "name", e.target.value)}
-                              required
-                            />
-                          </div>
-                          
-                          <div>
-                            <Label htmlFor={`email-${index}`}>Email</Label>
-                            <Input
-                              id={`email-${index}`}
-                              type="email"
-                              value={recipient.email}
-                              onChange={(e) => handleRecipientChange(index, "email", e.target.value)}
-                              required
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    {recipients.length < quantity && (
-                      <Button 
-                        variant="outline" 
-                        className="w-full mt-3"
-                        onClick={handleAddRecipient}
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Another Recipient
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {/* Discount Code */}
-            {!isFreeEvent && (
-              <div className="bg-white p-6 rounded-lg shadow-sm">
-                <div className="flex items-center mb-4 gap-2">
-                  <BadgePercent className="w-5 h-5 text-blue-600" />
-                  <h2 className="text-xl font-semibold">Discount Code</h2>
-                </div>
-                
-                <DiscountCodeInput 
-                  eventId={id as string} 
-                  onDiscountApplied={handleDiscountApplied} 
+            <div>
+              <Label htmlFor="emailAddress">Email address</Label>
+              <Input
+                id="emailAddress"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@address.com"
+              />
+            </div>
+            {/* Phone with country code selector */}
+            <div>
+              <Label htmlFor="phone">Phone number</Label>
+              <div className="flex gap-2">
+                <select
+                  value={dialCode}
+                  onChange={(e) => setDialCode(e.target.value)}
+                  className="border rounded-lg px-3 py-2 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  {dialCodes.map((d) => (
+                    <option key={d.code} value={d.code}>{`${d.flag} ${d.code}`}</option>
+                  ))}
+                </select>
+                <Input
+                  id="phone"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="8012345678"
+                  className="flex-1"
                 />
               </div>
-            )}
-            
-            {/* Terms and Conditions */}
-            <div className="bg-white p-6 rounded-lg shadow-sm">
-              <div className="flex items-start space-x-3">
-                <Checkbox 
-                  id="terms" 
-                  checked={isAgreedToTerms}
-                  onCheckedChange={(checked) => setIsAgreedToTerms(!!checked)}
-                />
-                <Label htmlFor="terms" className="text-sm">
-                  I agree to the <a href="#" className="text-blue-600 hover:underline">terms and conditions</a> and <a href="#" className="text-blue-600 hover:underline">privacy policy</a>. I understand that my tickets are non-refundable unless specified by the event organizer.
-                </Label>
-              </div>
+            </div>
+            <div className="flex items-start space-x-3">
+              <Checkbox
+                id="termsDesktop"
+                checked={isAgreedToTerms}
+                onCheckedChange={(c) => setIsAgreedToTerms(!!c)}
+              />
+              <Label htmlFor="termsDesktop" className="text-sm">
+                By clicking Register, I agree to the Ticwaka Terms of Service
+              </Label>
             </div>
           </div>
-          
-          {/* Right column - Order Summary */}
-          <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-lg shadow-sm sticky top-6">
-              <h2 className="text-xl font-semibold mb-4">Order Summary</h2>
-              
-              <div className="space-y-4">
-                <div className="flex items-start gap-3 pb-4 border-b border-gray-100">
-                  <Ticket className="w-5 h-5 text-blue-600 mt-0.5" />
-                  <div>
-                    <p className="font-medium">{ticketName}</p>
-                    <p className="text-sm text-gray-600">
-                      {quantity > 1 ? `${quantity} tickets` : "1 ticket"}
-                    </p>
-                  </div>
-                  <div className="ml-auto text-right">
-                    <p className="font-medium">₦{ticketPrice.toFixed(2)}</p>
-                    {quantity > 1 && (
-                      <p className="text-sm text-gray-600">
-                        x{quantity}
-                      </p>
+
+          {/* Recipients, Discount etc – reuse existing sections rendered conditionally */}
+          {quantity > 1 && (
+            <div className="space-y-4 bg-white p-6 shadow rounded border border-gray-100">
+              {/* existing Recipients UI here - reuse components */}
+              {recipients.map((recipient, index) => (
+                <div key={index} className="border border-gray-800 rounded-lg p-3 bg-gray-800">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-300">Recipient {index + 1}</span>
+
+                    {index > 0 && (
+                      <button
+                        onClick={() => handleRemoveRecipient(index)}
+                        className="text-red-400 p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     )}
                   </div>
-                </div>
-                
-                {/* Subtotal */}
-                <div className="flex justify-between text-gray-600">
-                  <span>Subtotal</span>
-                  <span>₦{subtotal.toFixed(2)}</span>
-                </div>
-                
-                {/* Discount */}
-                {discount && discountAmount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Discount ({discount.code})</span>
-                    <span>-₦{discountAmount.toFixed(2)}</span>
+
+                  <div className="space-y-2">
+                    <div>
+                      <Label htmlFor={`name-${index}`} className="text-gray-400 mb-1 block text-sm">
+                        Name
+                      </Label>
+                      <Input
+                        id={`name-${index}`}
+                        value={recipient.name}
+                        onChange={(e) => handleRecipientChange(index, "name", e.target.value)}
+                        required
+                        className="bg-gray-700 border-gray-600 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor={`email-${index}`} className="text-gray-400 mb-1 block text-sm">
+                        Email
+                      </Label>
+                      <Input
+                        id={`email-${index}`}
+                        type="email"
+                        value={recipient.email}
+                        onChange={(e) => handleRecipientChange(index, "email", e.target.value)}
+                        required
+                        className="bg-gray-700 border-gray-600 text-white"
+                      />
+                    </div>
                   </div>
-                )}
-                
-                <Separator />
-                
-                {/* Total */}
-                <div className="flex justify-between text-lg font-bold">
-                  <span>Total</span>
-                  <span>₦{total.toFixed(2)}</span>
                 </div>
-                
-                {/* Checkout Button */}
-                <Button 
-                  className="w-full py-6 text-base flex items-center justify-center gap-2 mt-4"
-                  onClick={handleSubmit}
-                  disabled={isLoading || !isAgreedToTerms}
+              ))}
+              {recipients.length < quantity && (
+                <button
+                  className="w-full py-2 border border-gray-700 rounded-lg text-gray-300 flex items-center justify-center gap-2 hover:bg-gray-800 transition-colors"
+                  onClick={handleAddRecipient}
                 >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard className="w-5 h-5" />
-                      <span>{isFreeEvent ? "Complete Registration" : "Pay Now"}</span>
-                    </>
-                  )}
-                </Button>
-                
-                {error && (
-                  <p className="text-sm text-red-500 text-center mt-2">{error}</p>
-                )}
-                
-                <p className="text-xs text-gray-500 text-center mt-3">
-                  Your payment is secured with industry-standard encryption
-                </p>
+                  <Plus className="w-4 h-4" />
+                  Add Another Recipient
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Discount */}
+          {!isFreeEvent && (
+            <div className="bg-white p-6 shadow rounded border border-gray-100">
+              <DiscountCodeInput
+                eventId={id as string}
+                onDiscountApplied={handleDiscountApplied}
+              />
+            </div>
+          )}
+
+          {/* Submit button */}
+          <div>
+            {error && <p className="text-red-600 mb-2 text-sm text-center">{error}</p>}
+            <button
+              onClick={handleSubmit}
+              disabled={isLoading || !isAgreedToTerms}
+              className={`w-full py-3 rounded-full font-semibold text-white ${
+                isLoading || !isAgreedToTerms
+                  ? "bg-gray-400"
+                  : "bg-gradient-to-r from-red-600 to-red-400 hover:from-red-700 hover:to-red-500"
+              }`}
+            >
+              {isLoading ? (
+                <div className="flex items-center justify-center gap-2">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Processing...</span>
+                </div>
+              ) : isFreeEvent ? (
+                "Get Free Ticket"
+              ) : (
+                "Proceed to make payment"
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Right column – Order summary */}
+        <div className="bg-white shadow rounded-xl border border-gray-100 overflow-hidden">
+          {imageUrl && (
+            <Image
+              src={imageUrl}
+              alt={event.name}
+              width={500}
+              height={300}
+              className="w-full h-48 object-cover"
+            />
+          )}
+          <div className="p-6 space-y-4">
+            <h2 className="font-semibold text-lg leading-tight">{event.name}</h2>
+            <p className="text-base font-semibold text-gray-700 tracking-wide">{formattedDate}</p>
+            <p className="text-sm text-gray-600">{event.location}</p>
+            <Separator />
+            <h3 className="font-semibold">Order summary</h3>
+            {selectedTickets.map((t) => (
+              <div key={t.id} className="flex justify-between text-sm">
+                <span>
+                  {t.quantity} x {t.name}
+                </span>
+                <span>
+                  {t.price > 0 
+                    ? formatCurrency(t.price * t.quantity)
+                    : <span className="text-green-500 font-semibold">FREE</span>
+                  }
+                </span>
               </div>
+            ))}
+            <Separator />
+            {discount && (
+              <div className="flex justify-between text-sm">
+                <span className="flex items-center gap-1">
+                  <BadgePercent className="h-4 w-4 text-green-500" />
+                  Discount ({discount.discountType === "percentage" ? `${discount.discountAmount}%` : `₦${discount.discountAmount}`})
+                </span>
+                <span className="text-green-600">
+                  -{formatCurrency(originalTotal - total)}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between font-semibold">
+              <span>Total</span>
+              <span>
+                {animatePrices && discount ? (
+                  <CountUp 
+                    start={originalTotal} 
+                    end={total} 
+                    duration={1.5} 
+                    separator=","
+                    decimals={2}
+                    decimal="."
+                    prefix="₦"
+                    onEnd={() => setAnimatePrices(false)}
+                  />
+                ) : (
+                  total > 0 ? formatCurrency(total) : <span className="text-green-500 font-semibold">FREE</span>
+                )}
+              </span>
             </div>
           </div>
         </div>

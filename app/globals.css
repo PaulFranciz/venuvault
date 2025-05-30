@@ -9,7 +9,27 @@
 }
 
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-pally-regular), var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Apply Pally font weights */
+.font-pally-regular {
+  font-family: var(--font-pally-regular), var(--font-geist-sans), Arial, sans-serif;
+}
+
+.font-pally-medium {
+  font-family: var(--font-pally-medium), var(--font-geist-sans), Arial, sans-serif;
+  font-weight: 500;
+}
+
+.font-pally-semibold {
+  font-family: var(--font-pally-medium), var(--font-geist-sans), Arial, sans-serif;
+  font-weight: 600;
+}
+
+.font-pally-bold {
+  font-family: var(--font-pally-bold), var(--font-geist-sans), Arial, sans-serif;
+  font-weight: 700;
 }
 
 @layer base {
@@ -75,4 +95,53 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Floating animations for hero section elements */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-15px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes float-slow {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes float-slow-reverse {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.animate-float-slow {
+  animation: float-slow 6s ease-in-out infinite;
+}
+
+.animate-float-slow-reverse {
+  animation: float-slow-reverse 5s ease-in-out infinite;
 }

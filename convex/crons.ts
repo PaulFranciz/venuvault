@@ -9,4 +9,11 @@ crons.interval(
   internal.waitingList.cleanupExpiredOffers
 );
 
+// Cron job to publish events that have reached their scheduled publish time
+crons.interval(
+  "publishScheduledEvents",
+  { minutes: 5 }, // Run every 5 minutes
+  internal.events.publishScheduledEvents
+);
+
 export default crons;

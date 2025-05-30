@@ -1,0 +1,328 @@
+"use client";
+
+import { Id } from "@/convex/_generated/dataModel";
+import { useEffect, useState } from "react";
+import { useUser } from "@clerk/nextjs";
+import { api } from "@/convex/_generated/api";
+import { useQuery } from "convex/react";
+import ReleaseTicket from "./ReleaseTicket";
+import { Ticket, LoaderCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useQueueSystem } from "@/hooks/queries/useQueueSystem";
+import { useEvent, useEventAvailability } from "@/hooks/queries/useEventQueries";
+import { useCircuitBreaker } from "@/hooks/useCircuitBreaker";
+import { toast } from "sonner";
+
+export default function HighPerformancePurchaseTicket({ 
+  eventId,
+  ticketTypeId
+}: { 
+  eventId: Id<"events">,
+  ticketTypeId?: string
+}) {
+  const { user } = useUser();
+  const router = useRouter();
+  
+  // Using enhanced caching for event data
+  const { data: event, isLoading: eventLoading } = useEvent(eventId, {
+    staleTime: 1000 * 60 * 5, // 5-minute cache for event details
+  });
+  
+  // Using enhanced caching for availability data
+  const { data: availability, isLoading: availabilityLoading } = useEventAvailability(eventId);
+
+  // Use Redis + BullMQ ticket reservation system
+  const { reserveTicket, useJobStatus } = useQueueSystem();
+  
+  // Circuit breaker for resilience
+  const { execute, status: circuitStatus } = useCircuitBreaker({
+    timeout: 5000, // 5 seconds timeout
+    resetTimeout: 10000, // 10 seconds before trying again after failure
+    maxFailures: 3, // Allow 3 failures before opening circuit
+  });
+
+  // Use existing Convex query for queue position
+  const queuePosition = useQuery(api.waitingList.getQueuePosition, {
+    eventId,
+    userId: user?.id ?? "",
+  });
+
+  const [reservationId, setReservationId] = useState<string | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Check job status if we have a reservation ID
+  const { data: jobStatus, isLoading: jobStatusLoading } = useJobStatus(
+    reservationId || undefined,
+    reservationId ? 'ticketReservation' : undefined
+  );
+
+  // If we don't have a queue position yet, set a future expiration time (10 minutes from now)
+  // This prevents "This offer has expired" message when first accessing the page
+  const defaultExpirationTime = Date.now() + 10 * 60 * 1000; // 10 minutes
+  const offerExpiresAt = queuePosition?.offerExpiresAt ?? defaultExpirationTime;
+  const isExpired = queuePosition ? (Date.now() > offerExpiresAt) : false;
+
+  // Get the ticket type and calculate total price
+  const quantity = queuePosition?.quantity || 1;
+  
+  let ticketPrice = event?.price || 0;
+  let ticketName = "General Admission";
+  let isFreeEvent = event?.isFreeEvent;
+  
+  const selectedTicketTypeId = ticketTypeId || queuePosition?.ticketTypeId;
+  
+  if (selectedTicketTypeId && event?.ticketTypes) {
+    const selectedType = event.ticketTypes.find(type => type.id === selectedTicketTypeId);
+    if (selectedType) {
+      ticketPrice = selectedType.price;
+      ticketName = selectedType.name;
+    }
+  }
+  
+  const totalPrice = ticketPrice * quantity;
+
+  useEffect(() => {
+    const calculateTimeRemaining = () => {
+      if (isExpired) {
+        setTimeRemaining("Expired");
+        return;
+      }
+
+      const diff = offerExpiresAt - Date.now();
+      const minutes = Math.floor(diff / 1000 / 60);
+      const seconds = Math.floor((diff / 1000) % 60);
+
+      if (minutes > 0) {
+        setTimeRemaining(
+          `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} second${
+            seconds === 1 ? "" : "s"
+          }`
+        );
+      } else {
+        setTimeRemaining(`${seconds} second${seconds === 1 ? "" : "s"}`);
+      }
+    };
+
+    if (offerExpiresAt > 0) {
+        calculateTimeRemaining();
+        const interval = setInterval(calculateTimeRemaining, 1000);
+        return () => clearInterval(interval);
+    } else {
+        setTimeRemaining("--:--");
+    }
+  }, [offerExpiresAt, isExpired]);
+
+  // Enhanced purchase handler using Redis + BullMQ
+  const handlePurchase = async () => {
+    if (!user) {
+      toast.error("Please sign in to purchase tickets");
+      return;
+    }
+    
+    if (isExpired) {
+      toast.error("This offer has expired");
+      return;
+    }
+    
+    // If we already have a queue position, proceed to checkout
+    if (queuePosition && queuePosition.status === "offered") {
+      // Ensure navigation happens outside of render cycle
+      setTimeout(() => {
+        router.push(`/checkout/${eventId}`);
+      }, 0);
+      return;
+    }
+    
+    // If no queue position, need to reserve a ticket using the high-performance system
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      // Use circuit breaker to prevent cascading failures
+      const result = await execute(() => 
+        reserveTicket.mutateAsync({
+          eventId: eventId as string,
+          ticketTypeId: selectedTicketTypeId as string,
+          quantity: quantity,
+        })
+      );
+      
+      if (result?.jobId) {
+        setReservationId(result.jobId);
+        toast.success("Processing your ticket reservation...");
+      }
+    } catch (error: any) {
+      setError(error.message || "Failed to reserve ticket");
+      toast.error(`Reservation failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // If job is completed successfully, redirect to checkout
+  useEffect(() => {
+    if (jobStatus?.state === 'completed') {
+      // Use setTimeout to avoid router updates during render cycle
+      setTimeout(() => {
+        router.push(`/checkout/${eventId}`);
+      }, 0);
+    }
+  }, [jobStatus, router, eventId]);
+
+  // Loading state
+  if (eventLoading || availabilityLoading) {
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-lg border border-amber-200 flex justify-center items-center">
+        <LoaderCircle className="w-8 h-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
+
+  // If the user already has a queue position, show the original ticket reservation UI
+  if (user && queuePosition && queuePosition.status === "offered") {
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-lg border border-amber-200">
+        <div className="space-y-4">
+          <div className="bg-white rounded-lg p-6 border border-gray-200">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
+                  <Ticket className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Ticket Reserved
+                  </h3>
+                  <p className={`text-sm ${isExpired ? 'text-red-500 font-bold' : 'text-gray-500'}`}>
+                    {isExpired ? "Offer Expired" : `Expires in ${timeRemaining}`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-sm text-gray-600 leading-relaxed">
+                {isExpired 
+                  ? "Your offer to purchase this ticket has expired." 
+                  : "A ticket has been reserved for you. Complete your purchase before the timer expires to secure your spot at this event."}
+              </div>
+              
+              {/* Display ticket details */}
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">{ticketName}</span>
+                  <span className="font-medium">
+                    {isFreeEvent ? "Free" : `₦${ticketPrice.toFixed(2)}`}
+                  </span>
+                </div>
+                
+                {quantity > 1 && (
+                  <div className="flex justify-between text-sm mt-1">
+                    <span className="text-gray-600">Quantity</span>
+                    <span className="font-medium">{quantity}</span>
+                  </div>
+                )}
+                
+                <div className="flex justify-between text-base font-bold mt-3 pt-3 border-t border-gray-100">
+                  <span>Total</span>
+                  <span className="text-blue-600">
+                    {isFreeEvent ? "Free" : `₦${totalPrice.toFixed(2)}`}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+              <p className="text-sm text-red-600 text-center">Error: {error}</p>
+          )}
+
+          <button
+            onClick={handlePurchase}
+            disabled={isExpired}
+            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-white px-8 py-4 rounded-lg font-bold shadow-md hover:from-amber-600 hover:to-amber-700 transform hover:scale-[1.02] transition-all duration-200 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:hover:scale-100 text-lg"
+          >
+            {isExpired ? "Offer Expired" : isFreeEvent ? "Get Free Ticket →" : `Pay ₦${totalPrice.toFixed(2)} Now →`}
+          </button>
+
+          {!isExpired && (
+            <div className="mt-4">
+              <ReleaseTicket eventId={eventId} waitingListId={queuePosition._id} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // If user doesn't have a queue position, show purchase button
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-lg border border-amber-200">
+      <div className="space-y-4">
+        <div className="bg-white rounded-lg p-6 border border-gray-200">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
+                <Ticket className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Get Your Ticket
+                </h3>
+                <p className="text-sm text-gray-500">
+                  {availability && availability.remainingTickets > 0 
+                    ? `${availability.remainingTickets} tickets remaining` 
+                    : "Limited availability"}
+                </p>
+              </div>
+            </div>
+
+            <div className="text-sm text-gray-600 leading-relaxed">
+              Secure your spot at this event by purchasing a ticket now.
+            </div>
+            
+            {/* Display ticket details */}
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">{ticketName}</span>
+                <span className="font-medium">
+                  {isFreeEvent ? "Free" : `₦${ticketPrice.toFixed(2)}`}
+                </span>
+              </div>
+              
+              <div className="flex justify-between text-base font-bold mt-3 pt-3 border-t border-gray-100">
+                <span>Total</span>
+                <span className="text-blue-600">
+                  {isFreeEvent ? "Free" : `₦${ticketPrice.toFixed(2)}`}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 text-center">Error: {error}</p>
+        )}
+
+        <button
+          onClick={handlePurchase}
+          disabled={isLoading || jobStatusLoading || circuitStatus === 'open'}
+          className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-white px-8 py-4 rounded-lg font-bold shadow-md hover:from-amber-600 hover:to-amber-700 transform hover:scale-[1.02] transition-all duration-200 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:hover:scale-100 text-lg"
+        >
+          {isLoading || jobStatusLoading ? (
+            <span className="flex items-center justify-center">
+              <LoaderCircle className="animate-spin mr-2" size={20} />
+              Processing...
+            </span>
+          ) : circuitStatus === 'open' ? (
+            "System busy, try again soon"
+          ) : isFreeEvent ? (
+            "Get Free Ticket →"
+          ) : (
+            `Pay ₦${ticketPrice.toFixed(2)} Now →`
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}

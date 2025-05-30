@@ -118,6 +118,7 @@ export default function JoinQueue({
             </div>
           ) : (
             <button
+              id="join-queue-btn"
               onClick={handleJoinQueue}
               disabled={isPastEvent || isEventOwner || !selectedTypeAvailable}
               className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors duration-200 shadow-md flex items-center justify-center disabled:bg-gray-400 disabled:cursor-not-allowed"

@@ -1,9 +1,5 @@
-import EventList from "@/components/EventList";
+import BuyerLandingPage from "@/components/landing/buyer/BuyerLandingPage";
 
 export default function Home() {
-  return (
-    <div className="">
-      <EventList />
-    </div>
-  );
+  return <BuyerLandingPage />;
 }

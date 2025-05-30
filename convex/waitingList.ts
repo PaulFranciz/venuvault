@@ -77,8 +77,13 @@ export const processQueue = mutation({
     eventId: v.id("events"),
   },
   handler: async (ctx, { eventId }) => {
+    console.log(`[processQueue] Starting for eventId: ${eventId}`);
     const event = await ctx.db.get(eventId);
-    if (!event) throw new Error("Event not found");
+    if (!event) {
+      console.error(`[processQueue] Event not found for eventId: ${eventId}`);
+      throw new Error("Event not found");
+    }
+    console.log(`[processQueue] Found event: ${event.name}`);
 
     // Calculate available spots
     const { availableSpots } = await ctx.db
@@ -113,25 +118,43 @@ export const processQueue = mutation({
               entries.filter((e) => (e.offerExpiresAt ?? 0) > now).length
           );
 
+        console.log(`[processQueue] Purchased count: ${purchasedCount}, Active offers: ${activeOffers}, Total tickets: ${event.totalTickets}`);
         return {
           availableSpots: event.totalTickets - (purchasedCount + activeOffers),
         };
       });
 
-    if (availableSpots <= 0) return;
+    console.log(`[processQueue] Calculated availableSpots: ${availableSpots} for eventId: ${eventId}`);
+
+    if (availableSpots <= 0) {
+      console.log(`[processQueue] No available spots for eventId: ${eventId}. Exiting.`);
+      return;
+    }
 
     // Get next users in line
-    const waitingUsers = await ctx.db
+    let waitingUsers;
+    const waitingUsersQuery = ctx.db
       .query("waitingList")
       .withIndex("by_event_status", (q) =>
         q.eq("eventId", eventId).eq("status", WAITING_LIST_STATUS.WAITING)
       )
-      .order("asc")
-      .take(availableSpots);
+      .order("asc");
+
+    if (availableSpots === Infinity) {
+      console.log(`[processQueue] Event has unlimited available spots. Offering to all waiting users for eventId: ${eventId}`);
+      waitingUsers = await waitingUsersQuery.collect();
+    } else {
+      // availableSpots is a positive finite number here
+      console.log(`[processQueue] Offering to next ${availableSpots} users for eventId: ${eventId}`);
+      waitingUsers = await waitingUsersQuery.take(availableSpots);
+    }
+
+    console.log(`[processQueue] Found ${waitingUsers.length} waiting users for eventId: ${eventId}`);
 
     // Create time-limited offers for selected users
     const now = Date.now();
     for (const user of waitingUsers) {
+      console.log(`[processQueue] Processing user ${user._id} for eventId: ${eventId}`);
       // Update the waiting list entry to OFFERED status
       await ctx.db.patch(user._id, {
         status: WAITING_LIST_STATUS.OFFERED,
@@ -223,17 +246,37 @@ export const releaseTicket = mutation({
     waitingListId: v.id("waitingList"),
   },
   handler: async (ctx, { eventId, waitingListId }) => {
-    const entry = await ctx.db.get(waitingListId);
-    if (!entry || entry.status !== WAITING_LIST_STATUS.OFFERED) {
-      throw new Error("No valid ticket offer found");
+    console.log(`[releaseTicket] Starting for eventId: ${eventId}, waitingListId: ${waitingListId}`);
+
+    const waitingListEntry = await ctx.db.get(waitingListId);
+    if (!waitingListEntry) {
+      console.error(`[releaseTicket] Waiting list entry not found: ${waitingListId}`);
+      // Optionally, decide if this should throw an error or return gracefully
+      // For now, let's log and attempt to proceed with queue processing if eventId is valid
+      // but this situation might indicate a problem.
+    } else {
+      console.log(`[releaseTicket] Found waiting list entry, current status: ${waitingListEntry.status}`);
+      // Mark the waiting list entry as EXPIRED
+      try {
+        await ctx.db.patch(waitingListId, {
+          status: WAITING_LIST_STATUS.EXPIRED,
+        });
+        console.log(`[releaseTicket] Successfully patched waitingListId ${waitingListId} to EXPIRED.`);
+      } catch (patchError) {
+        console.error(`[releaseTicket] Error patching waitingListId ${waitingListId}:`, patchError);
+        throw new Error(`Failed to update waiting list entry: ${patchError}`); // Re-throw to indicate failure
+      }
     }
 
-    // Mark the entry as expired
-    await ctx.db.patch(waitingListId, {
-      status: WAITING_LIST_STATUS.EXPIRED,
-    });
-
-    // Process queue to offer ticket to next person
-    await ctx.runMutation(api.waitingList.processQueue, { eventId });
+    // Process the queue to offer the spot to the next person
+    try {
+      console.log(`[releaseTicket] Calling processQueue for eventId: ${eventId}`);
+      await ctx.runMutation(api.waitingList.processQueue, { eventId });
+      console.log(`[releaseTicket] Successfully processed queue for eventId: ${eventId}`);
+    } catch (processQueueError) {
+      console.error(`[releaseTicket] Error processing queue for eventId ${eventId}:`, processQueueError);
+      // Decide if this error should also be re-thrown. If processQueue is critical for release, then yes.
+      throw new Error(`Failed to process queue after releasing ticket: ${processQueueError}`);
+    }
   },
 });

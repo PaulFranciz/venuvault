@@ -33,8 +33,7 @@ export type PaystackMetadata = {
   userId: string;
   waitingListId: Id<"waitingList">;
   cancel_action: string;
-  ticketTypeId?: string;
-  quantity?: number;
+  tickets: Array<{ ticketTypeId: string; quantity: number }>;
   discountCode?: string;
   customerInfo?: CustomerInfo;
   recipients?: TicketRecipient[];
@@ -50,15 +49,13 @@ interface InitializeSuccessData {
 
 export async function initializePaystackTransaction({
   eventId,
-  ticketTypeId,
-  quantity = 1,
+  tickets,
   discountCode,
   customerInfo,
   recipients
 }: {
   eventId: Id<"events">;
-  ticketTypeId?: string;
-  quantity?: number;
+  tickets: Array<{ ticketTypeId: string; quantity: number }>;
   discountCode?: string;
   customerInfo?: CustomerInfo;
   recipients?: TicketRecipient[];
@@ -92,29 +89,57 @@ export async function initializePaystackTransaction({
     throw new Error("Ticket offer has expired.");
   }
 
-  // Calculate the price based on ticket type
-  let ticketPrice = event.price;
-  
-  // If ticketTypeId is provided, find the corresponding ticket type and use its price
-  if (ticketTypeId && event.ticketTypes) {
-    const selectedType = event.ticketTypes.find(type => type.id === ticketTypeId);
-    if (selectedType) {
-      ticketPrice = selectedType.price;
+  if (!Array.isArray(tickets) || tickets.length === 0) {
+    throw new Error("No tickets provided");
+  }
+
+  let totalAmount = 0;
+
+  for (const { ticketTypeId, quantity } of tickets) {
+    const selectedType = event.ticketTypes?.find((t) => t.id === ticketTypeId);
+    if (!selectedType) {
+      throw new Error("Invalid ticket type selected.");
+    }
+    if (selectedType.remaining < quantity) {
+      throw new Error(`Only ${selectedType.remaining} tickets of type "${selectedType.name}" are available.`);
+    }
+
+    totalAmount += selectedType.price * quantity;
+  }
+
+  // If all tickets are free, skip payment and create order directly
+  if (totalAmount === 0) {
+    try {
+      // For free orders, process them directly without payment
+      // Since we're in a server action, we can directly call the database
+      // We'll use a workaround for TypeScript by casting the API path
+      const orderData = await convex.mutation(
+        // Use a string path to avoid TypeScript errors with the API structure
+        "orders:createFreeTicketOrder" as any, {
+        eventId,
+        waitingListId: queuePosition._id,
+        tickets,
+        customerInfo: customerInfo ? {
+          name: customerInfo.name,
+          email: customerInfo.email,
+          phone: customerInfo.phone,
+        } : {
+          name: user.name,
+          email: user.email,
+        },
+        recipients
+      });
       
-      // Verify there are enough tickets of this type available
-      if (selectedType.remaining < quantity) {
-        throw new Error(`Only ${selectedType.remaining} tickets of type "${selectedType.name}" are available.`);
-      }
+      // Return a direct URL to the success page with the order reference
+      return {
+        authorizationUrl: `${baseUrl}/payment/success?reference=${orderData.reference}`,
+        reference: orderData.reference,
+      };
+    } catch (error) {
+      console.error('Error processing free ticket:', error);
+      throw new Error(error instanceof Error ? error.message : 'Failed to process free ticket');
     }
   }
-
-  // Free event handling
-  if (ticketPrice === 0) {
-    throw new Error("Free tickets should not go through the payment gateway");
-  }
-
-  // Calculate total amount based on quantity
-  let totalAmount = ticketPrice * quantity;
 
   // Apply discount if provided
   if (discountCode) {
@@ -141,10 +166,17 @@ export async function initializePaystackTransaction({
     }
   }
 
-  // Calculate platform fee (5% + ₦100 per paid ticket)
-  const feePerTicket = (ticketPrice * 0.05) + 100;
-  const totalFees = feePerTicket * quantity;
-  
+  // Calculate platform fee for paid tickets (5% + ₦100 per paid ticket)
+  let totalFees = 0;
+  for (const { ticketTypeId, quantity } of tickets) {
+    const selectedType = event.ticketTypes?.find((t) => t.id === ticketTypeId);
+    if (!selectedType) continue;
+    if (selectedType.price > 0) {
+      const feePerTicket = selectedType.price * 0.05 + 100;
+      totalFees += feePerTicket * quantity;
+    }
+  }
+
   // Add fees if user is not absorbing them
   if (customerInfo?.absorberFees !== true) {
     totalAmount += totalFees;
@@ -173,8 +205,7 @@ export async function initializePaystackTransaction({
     userId,
     waitingListId: queuePosition._id,
     cancel_action: cancelUrl,
-    ticketTypeId,
-    quantity,
+    tickets,
     discountCode,
     customerInfo: customerInfo ? {
       name: customerInfo.name,

@@ -7,22 +7,24 @@ export default defineSchema({
     description: v.string(),
     location: v.string(),
     locationTips: v.optional(v.string()),
-    eventDate: v.number(),
-    endDate: v.optional(v.number()),
+    eventDate: v.number(), // For single events, this is the start date. For recurring, it's the first occurrence.
+    endDate: v.optional(v.number()), // For single events, this is the end date. For recurring, it's the end date of the first occurrence if applicable.
     startTime: v.optional(v.string()),
     endTime: v.optional(v.string()),
     timezone: v.optional(v.string()),
     category: v.optional(v.string()),
-    price: v.number(),
-    totalTickets: v.number(),
+    price: v.number(), // This might represent a base price or be deprecated if using ticketTypes exclusively
+    totalTickets: v.number(), // This might represent total capacity or be deprecated
     userId: v.string(),
     imageStorageId: v.optional(v.id("_storage")),
+    thumbnailImageStorageId: v.optional(v.id("_storage")), // For event card thumbnail
     is_cancelled: v.optional(v.boolean()),
     isPublished: v.optional(v.boolean()),
     inviteOnly: v.optional(v.boolean()),
     refundPolicy: v.optional(v.string()),
     organizerAbsorbsFees: v.optional(v.boolean()),
-    isFreeEvent: v.optional(v.boolean()), // Add support for free events
+    isFreeEvent: v.optional(v.boolean()), 
+    isHiddenFromHome: v.optional(v.boolean()), // Added field
     ticketTypes: v.optional(v.array(
       v.object({
         id: v.string(),
@@ -39,6 +41,18 @@ export default defineSchema({
         priceInfo: v.optional(v.string()), // Added priceInfo
       })
     )),
+    // Recurring Event Fields
+    isRecurring: v.optional(v.boolean()),
+    recurringFrequency: v.optional(v.union(
+      v.literal('daily'),
+      v.literal('weekly'),
+      v.literal('monthly')
+    )),
+    recurringInterval: v.optional(v.number()), // e.g., every 2 weeks
+    recurringDaysOfWeek: v.optional(v.array(v.string())), // e.g., ['Monday', 'Wednesday'] for weekly
+    recurringDayOfMonth: v.optional(v.number()), // e.g., 15 for monthly on the 15th
+    recurringEndDate: v.optional(v.number()), // Timestamp for when the recurrence ends
+    scheduledPublishTime: v.optional(v.number()), // Timestamp for when the event should be published
   }),
   tickets: defineTable({
     eventId: v.id("events"),

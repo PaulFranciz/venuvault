@@ -9,6 +9,9 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)', // Clerk sign-up routes
   '/api/webhooks/paystack(.*)', // Paystack webhook (ensure this doesn't need auth itself)
   '/validate-ticket/(.*)', // Ticket validation page
+  '/creators/overview', // Creator landing page
+  '/creators/(.*)', // All creators pages
+  // '/create-event', // Removed to make it a protected route
 ]);
 
 export default clerkMiddleware((auth, req: NextRequest) => {
@@ -27,6 +30,8 @@ export const config = {
     // The /api/webhooks/paystack is explicitly public.
     '/((?!.+\.[\w]+$|_next).*)', // Exclude files with extensions and _next
     '/', // Include root
+    '/creators/:path*',
+    '/create-event',
     '/(api|trpc)(.*)', // Include API routes, but they'll be checked by isPublicRoute
   ],
 };

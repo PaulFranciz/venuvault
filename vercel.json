@@ -1,0 +1,13 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/process-queues?token=your-secret-token",
+      "schedule": "* * * * *"
+    }
+  ],
+  "functions": {
+    "app/api/cron/process-queues/**": {
+      "maxDuration": 60
+    }
+  }
+}

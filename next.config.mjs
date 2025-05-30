@@ -42,6 +42,12 @@ const nextConfig = {
         pathname: '/api/storage/**',
       },
       // Add other domains if needed
+      {
+        protocol: 'https',
+        hostname: 'cdn.prod.website-files.com',
+        port: '',
+        pathname: '/**',
+      },
     ],
   },
 };

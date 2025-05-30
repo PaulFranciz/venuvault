@@ -125,3 +125,126 @@ export const getTicketDetailsForValidation = query({
 // export function generateTicketValidationUrl(ticketId: Id<"tickets">, baseUrl: string): string {
 //   return `${baseUrl}/validate-ticket/${ticketId}`;
 // }
+
+// Make sure confirmPayment mutation is properly closed
+
+// Ticket reservation mutation for the high-performance system
+export const reserveTicket = mutation({
+  args: {
+    eventId: v.id("events"),
+    userId: v.string(),
+    ticketTypeId: v.string(),
+    quantity: v.number(),
+  },
+  handler: async (ctx, { eventId, userId, ticketTypeId, quantity }) => {
+    // Get the event to check availability
+    const event = await ctx.db.get(eventId);
+    if (!event) {
+      throw new Error("Event not found");
+    }
+
+    // Check if the event is not cancelled
+    if (event.is_cancelled) {
+      throw new Error("Event is cancelled");
+    }
+
+    // Find the ticket type
+    const ticketType = event.ticketTypes?.find(t => t.id === ticketTypeId);
+    if (!ticketType) {
+      throw new Error("Ticket type not found");
+    }
+
+    // Check availability
+    if (ticketType.quantity !== undefined && ticketType.quantity < quantity) {
+      throw new Error("Not enough tickets available");
+    }
+
+    // Create a waiting list entry with status "offered"
+    const waitingListId = await ctx.db.insert("waitingList", {
+      eventId,
+      userId,
+      ticketTypeId,
+      quantity,
+      status: "offered",
+      offerExpiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes expiry
+    });
+
+    return {
+      success: true,
+      waitingListId,
+    };
+  },
+});
+
+// Payment confirmation mutation for the high-performance system
+export const confirmPayment = mutation({
+  args: {
+    reservationId: v.id("waitingList"),
+    paymentMethod: v.string(),
+    paystackReference: v.optional(v.string()),
+  },
+  handler: async (ctx, { reservationId, paymentMethod, paystackReference }) => {
+    // Get the reservation
+    const reservation = await ctx.db.get(reservationId);
+    if (!reservation) {
+      throw new Error("Reservation not found");
+    }
+
+    // Check if the reservation is still valid
+    if (reservation.status !== "offered" || 
+        (reservation.offerExpiresAt && Date.now() > reservation.offerExpiresAt)) {
+      throw new Error("Reservation has expired");
+    }
+
+    // Get the event
+    const event = await ctx.db.get(reservation.eventId);
+    if (!event) {
+      throw new Error("Event not found");
+    }
+
+    // Find the ticket type
+    const ticketType = event.ticketTypes?.find(t => t.id === reservation.ticketTypeId);
+    if (!ticketType) {
+      throw new Error("Ticket type not found");
+    }
+
+    // Create the ticket with proper fields according to the schema
+    const ticketId = await ctx.db.insert("tickets", {
+      eventId: reservation.eventId,
+      userId: reservation.userId,
+      ticketTypeId: reservation.ticketTypeId || "",
+      status: "valid",
+      purchasedAt: Date.now(),
+      amount: ticketType.price * (reservation.quantity || 1),
+      currency: "NGN",
+      paystackReference
+      // Note: paymentMethod is not in the schema so we omit it
+    });
+
+    // Update the reservation status
+    await ctx.db.patch(reservationId, {
+      status: "purchased", // Use a valid status from the enum
+    });
+
+    // Update ticket type quantity if it's defined
+    if (ticketType.quantity !== undefined && event.ticketTypes) {
+      // We can't directly update the ticketTypes array in the event document
+      // So we need to get all ticket types, update the specific one, and then update the whole array
+      const updatedTicketTypes = event.ticketTypes.map(t => {
+        if (t.id === reservation.ticketTypeId && t.quantity !== undefined) {
+          return { ...t, quantity: t.quantity - (reservation.quantity || 1) };
+        }
+        return t;
+      });
+
+      await ctx.db.patch(reservation.eventId, {
+        ticketTypes: updatedTicketTypes,
+      });
+    }
+
+    return {
+      success: true,
+      ticketId,
+    };
+  },
+})

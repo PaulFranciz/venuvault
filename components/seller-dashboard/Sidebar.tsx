@@ -34,14 +34,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       )}
 
       <aside 
-        className={`fixed inset-y-0 left-0 z-30 w-64 bg-slate-900 text-slate-200 p-4 space-y-6 flex flex-col shadow-xl transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:shadow-lg
+        className={`fixed inset-y-0 left-0 z-30 w-64 bg-[#0C090C] text-[#F9F6F0] p-4 space-y-6 flex flex-col shadow-xl transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:shadow-lg
                   ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="flex items-center justify-between pb-3 border-b border-slate-700">
-          <div className="text-2xl font-pally-bold text-white">
-            EventPulse
+        <div className="flex items-center justify-between pb-3 border-b border-[#F96521]/30">
+          <div className="text-2xl font-bold text-[#F96521]">
+            Ticwaka
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white md:hidden" aria-label="Close sidebar">
+          <button onClick={onClose} className="text-[#F9F6F0]/70 hover:text-[#F96521] md:hidden" aria-label="Close sidebar">
             <X size={24} />
           </button>
         </div>
@@ -57,10 +57,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                       onClick={onClose}
                       className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors 
                                   ${isActive
-                                    ? 'bg-brand-teal text-white font-pally-medium shadow-md'
-                                    : 'hover:bg-slate-700 hover:text-white'}`}
+                                    ? 'bg-[#F96521] text-white font-medium shadow-md'
+                                    : 'hover:bg-[#F96521]/10 hover:text-[#F96521]'}`}
                     >
-                      <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                      <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-white' : 'text-[#F9F6F0]/70'}`} />
                       {item.label}
                     </a>
                   </Link>
@@ -70,16 +70,16 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </ul>
         </nav>
         
-        <div className="border-t border-slate-700 pt-4">
+        <div className="border-t border-[#F96521]/30 pt-4">
           <Link href="/seller/profile" legacyBehavior>
             <a
               onClick={onClose}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors 
                           ${pathname === '/seller/profile'
-                            ? 'bg-brand-teal text-white font-pally-medium shadow-md'
-                            : 'hover:bg-slate-700 hover:text-white'}`}
+                            ? 'bg-[#F96521] text-white font-medium shadow-md'
+                            : 'hover:bg-[#F96521]/10 hover:text-[#F96521]'}`}
             >
-              <Users className={`w-5 h-5 flex-shrink-0 ${pathname === '/seller/profile' ? 'text-white' : 'text-slate-400'}`} />
+              <Users className={`w-5 h-5 flex-shrink-0 ${pathname === '/seller/profile' ? 'text-white' : 'text-[#F9F6F0]/70'}`} />
               Organizer Profile
             </a>
           </Link>

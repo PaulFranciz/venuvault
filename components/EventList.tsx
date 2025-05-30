@@ -1,18 +1,34 @@
 "use client";
 
-import { api } from "@/convex/_generated/api";
-import { useQuery } from "convex/react";
 import EventCard from "./EventCard";
 import Spinner from "./Spinner";
 import { CalendarDays, Ticket } from "lucide-react";
+import { useEvents } from "../hooks/queries/useEventQueries";
+import { useState } from "react";
 
 export default function EventList() {
-  const events = useQuery(api.events.get);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  
+  // Use our enhanced events hook with caching
+  const { data: events, isLoading, error } = useEvents({
+    staleTime: 1000 * 60 * 5, // 5 minutes cache
+  });
 
-  if (!events) {
+  if (isLoading || !events) {
     return (
       <div className="min-h-[400px] flex items-center justify-center">
         <Spinner />
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="min-h-[400px] flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-500 mb-2">Error loading events</p>
+          <p className="text-gray-500">Please try again later</p>
+        </div>
       </div>
     );
   }
@@ -47,7 +63,7 @@ export default function EventList() {
 
       {/* Upcoming Events Grid */}
       {upcomingEvents.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+        <div className="flex flex-wrap gap-[25px] mb-12">
           {upcomingEvents.map((event) => (
             <EventCard key={event._id} eventId={event._id} />
           ))}
@@ -66,7 +82,7 @@ export default function EventList() {
       {pastEvents.length > 0 && (
         <>
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Past Events</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="flex flex-wrap gap-[2px]">
             {pastEvents.map((event) => (
               <EventCard key={event._id} eventId={event._id} />
             ))}

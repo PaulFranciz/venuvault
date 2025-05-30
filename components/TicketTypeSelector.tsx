@@ -25,14 +25,18 @@ type TicketType = {
 
 interface TicketTypeSelectorProps {
   ticketTypes: TicketType[];
-  defaultPrice: number | string;
-  onSelect: (ticketTypeId: string, quantity: number) => void;
+  defaultPrice?: number | string;
+  onTicketSelect: (ticketTypeId: string, quantity: number) => void;
+  onPurchase: (ticketTypeId: string, quantity: number) => void;
+  availability?: any; // Replace with proper type when available
 }
 
 export default function TicketTypeSelector({ 
   ticketTypes = [], 
   defaultPrice = 0,
-  onSelect 
+  onTicketSelect,
+  onPurchase,
+  availability 
 }: TicketTypeSelectorProps) {
   const [selectedType, setSelectedType] = useState<string | null>(
     ticketTypes.length > 0 ? ticketTypes[0].id : null
@@ -79,13 +83,13 @@ export default function TicketTypeSelector({
 
     // Update parent component with the selected type and quantity
     if (typeId === selectedType) {
-      onSelect(typeId, newQuantity);
+      onTicketSelect(typeId, newQuantity);
     }
   };
 
   const handleTypeSelect = (typeId: string) => {
     setSelectedType(typeId);
-    onSelect(typeId, quantities[typeId] || 1);
+    onTicketSelect(typeId, quantities[typeId] || 1);
   };
 
   return (

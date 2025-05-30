@@ -3,9 +3,12 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { ConvexClientProvider } from "@/components/ConvexClientProvider";
 import Header from "@/components/Header";
+import Footer from "@/components/layout/Footer";
 import { ClerkProvider } from "@clerk/nextjs";
 import SyncUserWithConvex from "@/components/SyncUserWithConvex";
-import { Toaster } from "@/components/ui/toaster";
+import PrefetchManager from "@/components/PrefetchManager";
+import { Toaster } from "sonner";
+import { AppProviders } from "@/providers/AppProviders";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -50,13 +53,16 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${pallyRegular.variable} ${pallyMedium.variable} ${pallyBold.variable} antialiased`}
       >
         <ClerkProvider>
-          <ConvexClientProvider>
-            <Header />
-            <SyncUserWithConvex />
-            {children}
-
-            <Toaster />
-          </ConvexClientProvider>
+          <AppProviders>
+            <ConvexClientProvider>
+              <Header />
+              <SyncUserWithConvex />
+              <PrefetchManager />
+              {children}
+              <Footer />
+              <Toaster richColors closeButton position="top-right" />
+            </ConvexClientProvider>
+          </AppProviders>
         </ClerkProvider>
       </body>
     </html>

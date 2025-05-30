@@ -16,23 +16,23 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-100">
+    <div className="flex h-screen bg-[#F9F6F0]">
       <Sidebar isOpen={isMobileSidebarOpen} onClose={() => setIsMobileSidebarOpen(false)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Header / Toggle Button */}
-        <header className="md:hidden bg-white shadow-md p-4 flex items-center justify-between">
-          <div className="text-xl font-pally-bold text-brand-teal">EventPulse</div>
+        <header className="md:hidden bg-[#0C090C] shadow-md p-4 flex items-center justify-between">
+          <div className="text-xl font-bold text-[#F96521]">EventPulse</div>
           <button 
             onClick={toggleMobileSidebar} 
-            className="text-slate-600 hover:text-brand-teal focus:outline-none"
+            className="text-[#F9F6F0] hover:text-[#F96521] focus:outline-none"
             aria-label="Open sidebar"
           >
             <Menu size={28} />
           </button>
         </header>
         
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className="flex-1 p-6 overflow-y-auto bg-[#F9F6F0]">
           {children}
         </main>
       </div>
