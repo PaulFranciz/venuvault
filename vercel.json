@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/process-queues?token=your-secret-token",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "functions": {
