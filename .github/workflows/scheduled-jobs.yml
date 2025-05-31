@@ -167,23 +167,4 @@ jobs:
               // Don't fail the workflow if waitlist processing fails
             }
 
-  # Send a Slack notification on failure (only if using schedule)
-  notify-on-failure:
-    name: Send Failure Notification
-    runs-on: ubuntu-latest
-    if: ${{ failure() && github.event_name == 'schedule' && secrets.SLACK_WEBHOOK_URL != '' }}
-    needs: [process-tickets, cleanup-reservations, waitlist-processing]
-    
-    steps:
-      - name: Send Slack Notification
-        uses: act10ns/slack@v1
-        with:
-          status: ${{ job.status }}
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          message: |
-            :red_circle: GitHub Actions workflow failed!
-            
-            Workflow: ${{ github.workflow }}
-            Repository: ${{ github.repository }}
-            
-            See details: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  # Note: We removed the Slack notification job as it's not being used
