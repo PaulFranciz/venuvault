@@ -23,8 +23,8 @@ const BasicInfoStep: React.FC<BasicInfoStepProps> = ({
   isSubmitting,
 }) => {
   const { formData, setFormData } = useEventForm();
-  const [bannerPreview, setBannerPreview] = useState<string | null>(formData.bannerImageUrl || null);
-  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(formData.thumbnailImageUrl || null);
+  const [bannerPreview, setBannerPreview] = useState<string | null>(formData.bannerImagePreviewUrl || null);
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(formData.thumbnailImagePreviewUrl || null);
   const [isUploadingBanner, setIsUploadingBanner] = useState(false); 
   const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false); 
 
@@ -46,7 +46,7 @@ const BasicInfoStep: React.FC<BasicInfoStepProps> = ({
         setBannerPreview(reader.result as string);
         setFormData({
           bannerImage: file, 
-          bannerImageUrl: reader.result as string 
+          bannerImagePreviewUrl: reader.result as string 
         });
       };
       reader.readAsDataURL(file);
@@ -79,7 +79,7 @@ const BasicInfoStep: React.FC<BasicInfoStepProps> = ({
         setThumbnailPreview(imageUrl);
         setFormData({
           thumbnailImage: file,
-          thumbnailImageUrl: imageUrl
+          thumbnailImagePreviewUrl: imageUrl
         });
       };
       reader.readAsDataURL(file);
@@ -109,14 +109,14 @@ const BasicInfoStep: React.FC<BasicInfoStepProps> = ({
       setBannerPreview(null);
       setFormData({
         bannerImage: undefined,
-        bannerImageUrl: undefined,
+        bannerImagePreviewUrl: undefined,
         bannerImageStorageId: undefined 
       });
     } else {
       setThumbnailPreview(null);
       setFormData({
         thumbnailImage: undefined,
-        thumbnailImageUrl: undefined,
+        thumbnailImagePreviewUrl: undefined,
         thumbnailImageStorageId: undefined // Clear storage ID for thumbnail
       });
     }

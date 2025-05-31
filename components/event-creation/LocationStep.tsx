@@ -7,6 +7,26 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { MapPin, Globe, Video, Link2, AlertCircle, ExternalLink, CheckCircle } from 'lucide-react';
 import { useEventForm } from '@/providers/EventFormProvider';
 import { toast } from 'sonner';
+import { geocodeAddress } from '@/app/actions/geocode';
+
+// Nigerian cities for the dropdown
+const NIGERIAN_CITIES = [
+  'Lagos', 'Abuja', 'Kano', 'Ibadan', 'Port Harcourt', 'Benin City', 'Calabar',
+  'Kaduna', 'Maiduguri', 'Enugu', 'Aba', 'Onitsha', 'Warri', 'Ilorin', 'Uyo',
+  'Jos', 'Zaria', 'Akure', 'Sokoto', 'Owerri', 'Yola', 'Abeokuta', 'Makurdi',
+  'Ado-Ekiti', 'Minna', 'Umuahia', 'Lokoja', 'Asaba', 'Yenagoa', 'Gombe',
+  'Jalingo', 'Dutse', 'Birnin Kebbi', 'Osogbo', 'Damaturu', 'Bauchi', 'Awka',
+  'Ikeja', 'Ogbomosho', 'Ife', 'Abakaliki', 'Ilesha', 'Ila', 'Shagamu', 'Owo'
+];
+
+// Nigerian states for the dropdown
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo',
+  'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa',
+  'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba',
+  'Yobe', 'Zamfara'
+];
 
 interface LocationStepProps {
   onNext: () => void;
@@ -20,8 +40,8 @@ const LocationStep: React.FC<LocationStepProps> = ({
   isSubmitting,
 }) => {
   const { formData, setFormData } = useEventForm();
-  const [isVerifying, setIsVerifying] = React.useState(false);
   const [isAddressVerified, setIsAddressVerified] = React.useState(false);
+  const [isVerifying, setIsVerifying] = React.useState(false);
   const [linkPreview, setLinkPreview] = React.useState<{
     platform: 'zoom' | 'google-meet' | 'teams' | 'youtube' | 'other' | 'invalid';
     icon: React.ReactNode;
@@ -30,7 +50,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
     isValid: boolean;
   } | null>(null);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData({ [name]: value });
     
@@ -43,7 +63,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
       setIsAddressVerified(false);
     }
   };
-  
+
   // Function to analyze and categorize the virtual link
   const analyzeVirtualLink = React.useCallback((url: string) => {
     if (!url.trim()) {
@@ -114,11 +134,29 @@ const LocationStep: React.FC<LocationStepProps> = ({
       });
     }
   }, [setLinkPreview]);
-  
-  // Function to verify address using the OpenCage Geocoding API
-  const verifyAddress = React.useCallback(async () => {
+
+  // Set default locationType and country if not already set
+  React.useEffect(() => {
+    const updates: Partial<EventFormData> = {};
+    
+    if (!formData.locationType) {
+      updates.locationType = 'physical';
+    }
+    
+    if (!formData.country) {
+      updates.country = 'Nigeria';
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      setFormData(updates);
+    }
+  }, [formData.locationType, formData.country, setFormData]);
+
+  const verifyAddress = async () => {
     if (!formData.address) {
-      toast.error("Please enter an address");
+      toast.error("Address required", {
+        description: "Please enter an address to verify.",
+      });
       return;
     }
     
@@ -126,58 +164,60 @@ const LocationStep: React.FC<LocationStepProps> = ({
     setIsAddressVerified(false);
     
     try {
-      // Use the API key directly for debugging purposes
-      // In production, you should use a server-side API route for security
-      const apiKey = 'a10ac05696304bcf9c07cf7bb41102b9';
+      // If country is Nigeria and not specified in address, append it
+      let addressToVerify = formData.address;
+      if (formData.country === 'Nigeria' && !addressToVerify.toLowerCase().includes('nigeria')) {
+        addressToVerify = `${addressToVerify}, Nigeria`;
+      }
       
-      console.log('Verifying address:', formData.address);
+      console.log('Verifying address:', addressToVerify);
       
-      // Make sure we have a valid address format for the API
-      const searchQuery = formData.address.trim();
-      const url = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(searchQuery)}&key=${apiKey}&limit=1`;
+      // Call our server action
+      const result = await geocodeAddress(addressToVerify);
       
-      console.log('OpenCage API URL:', url);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        }
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('OpenCage API error:', response.status, errorText);
-        toast.error(`API error: ${response.status}`, {
-          description: "There was an error contacting the geocoding service."
+      if (!result.success) {
+        console.error('Geocoding error:', result.error);
+        toast.error(result.error || 'Verification failed', {
+          description: "Please check the address and try again."
         });
         return;
       }
       
-      const data = await response.json();
-      console.log('OpenCage API response:', data);
+      console.log('Geocoding response data:', result);
       
-      if (data.results && data.results.length > 0) {
-        const result = data.results[0];
-        const { components, formatted } = result;
-        
-        const updateData: Partial<EventFormData> = {
-          address: formatted || formData.address,
-          city: components.city || components.town || components.village || '',
-          state: components.state || components.county || '',
-          country: components.country || '',
-          zipCode: components.postcode || ''
-        };
-        
-        setFormData(updateData);
-        setIsAddressVerified(true);
-        
-        toast.success("Address verified", {
-          description: "Location details have been filled automatically.",
+      // Determine what data to use from the geocoding result
+      // Keep the user's input for fields that are missing in the API response
+      const updateData: Partial<EventFormData> = {
+        address: result.address || formData.address,
+        city: result.city || formData.city || '',
+        state: result.state || formData.state || '',
+        country: result.country || formData.country || 'Nigeria',
+        zipCode: result.zipCode || formData.zipCode || ''
+      };
+      
+      console.log('Updating form with data:', updateData);
+      
+      // Update the form with the geocoded data
+      setFormData({
+        address: updateData.address,
+        city: updateData.city,
+        state: updateData.state,
+        country: updateData.country,
+        zipCode: updateData.zipCode
+      });
+      
+      setIsAddressVerified(true);
+      
+      // Check if we're missing any important location data
+      const isPartialData = !updateData.city || !updateData.state;
+      
+      if (isPartialData) {
+        toast.success("Address partially verified", {
+          description: "Some location details couldn't be automatically filled. Please select from the dropdown options.",
         });
       } else {
-        toast.error("Address not found", {
-          description: "Please check the address and try again.",
+        toast.success("Address verified", {
+          description: "Location details have been filled automatically.",
         });
       }
     } catch (error) {
@@ -188,14 +228,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
     } finally {
       setIsVerifying(false);
     }
-  }, [formData.address, setFormData]);
-  
-  // Initialize preview on component mount if virtual link exists
-  React.useEffect(() => {
-    if (formData.virtualLink) {
-      analyzeVirtualLink(formData.virtualLink);
-    }
-  }, [formData.virtualLink, analyzeVirtualLink]);
+  };
 
   const handleLocationTypeChange = (value: 'physical' | 'virtual') => {
     setFormData({ locationType: value });
@@ -266,7 +299,7 @@ const LocationStep: React.FC<LocationStepProps> = ({
                     name="address"
                     value={formData.address || ''}
                     onChange={handleInputChange}
-                    placeholder="Enter venue address"
+                    placeholder="Enter complete address (e.g., 24 Broad St, Lagos)"
                     className={`bg-[#2C2C2C] border-[#3B3B3B] text-white pr-9 ${isAddressVerified ? 'border-green-500' : ''}`}
                     required
                   />
@@ -276,55 +309,79 @@ const LocationStep: React.FC<LocationStepProps> = ({
                 </div>
                 <Button 
                   type="button" 
-                  variant="outline" 
-                  onClick={verifyAddress}
+                  onClick={verifyAddress} 
+                  className="min-w-0 text-white bg-[#F96521] hover:bg-[#FF8142] h-10 px-3"
                   disabled={!formData.address || isVerifying}
-                  className="bg-[#2C2C2C] border-[#3B3B3B] hover:bg-[#3B3B3B] hover:text-[#F96521]"
                 >
                   {isVerifying ? 'Verifying...' : 'Verify'}
                 </Button>
               </div>
+              <p className="text-xs text-gray-400 mt-1">
+                For best results, include street, city and country in your address
+              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="city" className="block text-white mb-2">City</Label>
-                <Input
-                  id="city"
-                  name="city"
-                  value={formData.city || ''}
-                  onChange={handleInputChange}
-                  placeholder="City"
-                  className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="city"
+                    name="city"
+                    list="city-options"
+                    value={formData.city || ''}
+                    onChange={handleInputChange}
+                    placeholder="Select or type a city"
+                    className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
+                    required
+                  />
+                  <datalist id="city-options">
+                    {NIGERIAN_CITIES.map((city) => (
+                      <option key={city} value={city} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
 
               <div>
                 <Label htmlFor="state" className="block text-white mb-2">State/Province</Label>
-                <Input
-                  id="state"
-                  name="state"
-                  value={formData.state || ''}
-                  onChange={handleInputChange}
-                  placeholder="State/Province"
-                  className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
-                />
+                <div className="relative">
+                  <Input
+                    id="state"
+                    name="state"
+                    list="state-options"
+                    value={formData.state || ''}
+                    onChange={handleInputChange}
+                    placeholder="Select or type a state"
+                    className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
+                    required
+                  />
+                  <datalist id="state-options">
+                    {NIGERIAN_STATES.map((state) => (
+                      <option key={state} value={state} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="country" className="block text-white mb-2">Country</Label>
-                <Input
+                <select
                   id="country"
                   name="country"
-                  value={formData.country || ''}
+                  value={formData.country || 'Nigeria'}
                   onChange={handleInputChange}
-                  placeholder="Country"
-                  className="bg-[#2C2C2C] border-[#3B3B3B] text-white"
+                  className="w-full px-3 py-2 rounded-md bg-[#2C2C2C] border border-[#3B3B3B] text-white focus:border-[#F96521] focus:ring-[#F96521]"
                   required
-                />
+                >
+                  <option value="Nigeria">Nigeria</option>
+                  <option value="Ghana">Ghana</option>
+                  <option value="Kenya">Kenya</option>
+                  <option value="South Africa">South Africa</option>
+                  <option value="">Other</option>
+                </select>
               </div>
 
               <div>

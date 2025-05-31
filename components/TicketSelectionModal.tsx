@@ -115,7 +115,13 @@ export default function TicketSelectionModal({
       const expiryTime = Date.now() + 10 * 60 * 1000; // 10 minutes
       
       // Update Zustand store with reservation data and ticket details
-      startReservation(expiryTime);
+      startReservation(
+        expiryTime,
+        null, // reservationId - not available yet
+        eventId,
+        event?.name || "Event",
+        imageUrl // eventBannerUrl
+      );
       
       // Trigger the purchase process with a short delay
       setTimeout(() => {
@@ -165,22 +171,43 @@ export default function TicketSelectionModal({
       // Set 10 minute expiry time
       const expiryTime = Date.now() + 10 * 60 * 1000; // 10 minutes
       
-      // Update Zustand store with reservation data
-      startReservation(expiryTime);
+      // Start reservation in Zustand store with all required data
+      // This ensures the data persists across pages
+      startReservation(
+        expiryTime,
+        null, // reservationId - not available yet
+        eventId,
+        event?.name || "Event",
+        imageUrl // eventBannerUrl
+      );
       
-      // Call onPurchase callback
-      onPurchase(selectedTicketType, quantities[selectedTicketType]);
-      
-      // Trigger join queue callback if provided
-      if (onJoinQueue) {
-        setTimeout(() => onJoinQueue(), 100);
+      // Store selected ticket details in ticketStore
+      const ticketType = ticketTypes.find((t: any) => t.id === selectedTicketType);
+      if (ticketType) {
+        setSelectedTicket(
+          selectedTicketType,
+          quantities[selectedTicketType],
+          ticketType.name,
+          ticketType.price
+        );
       }
       
-      // Mark reservation as complete after a delay
+      // Mark reservation as complete immediately to ensure state is saved
+      completeReservation();
+      
+      // Close modal first
+      onClose();
+      
+      // Add slight delay before navigation to ensure state persists
       setTimeout(() => {
-        completeReservation();
-        onClose();
-      }, 1000);
+        // Call onPurchase callback with ticket details
+        onPurchase(selectedTicketType, quantities[selectedTicketType]);
+        
+        // Trigger join queue callback if provided
+        if (onJoinQueue) {
+          onJoinQueue();
+        }
+      }, 300);
     }
   };
 

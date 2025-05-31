@@ -20,6 +20,7 @@ import Image from "next/image";
 import { useStorageUrl } from "@/lib/utils";
 import { dialCodes } from "@/lib/dialCodes";
 import CountUp from "react-countup";
+import { toast } from "sonner";
 
 interface TicketRecipient {
   name: string;
@@ -40,10 +41,27 @@ export default function CheckoutPage() {
 
   const event = useQuery(api.events.getById, { eventId: id as Id<"events"> });
 
+  // Enhanced type definition to accommodate extended queue position status values
+  type QueueStatus = "waiting" | "offered" | "purchased" | "expired" | "released" | string;
+  
+  // Define more complete interface for queue position with ticketDetails
+  interface QueuePositionWithDetails {
+    position: number;
+    _id: Id<"waitingList">;
+    _creationTime: number;
+    quantity?: number;
+    ticketTypeId?: string;
+    ticketDetails?: Array<{ ticketTypeId: string; quantity: number }>;
+    offerExpiresAt?: number;
+    userId: string;
+    eventId: Id<"events">;
+    status: QueueStatus;
+  }
+  
   const queuePosition = useQuery(api.waitingList.getQueuePosition, {
     eventId: id as Id<"events">,
     userId: user?.id ?? "",
-  });
+  }) as QueuePositionWithDetails | null | undefined;
 
   // Always fetch event image URL to maintain consistent hook order
   const imageUrl = useStorageUrl(event?.thumbnailImageStorageId || event?.imageStorageId);
@@ -60,6 +78,13 @@ export default function CheckoutPage() {
   const [animatePrices, setAnimatePrices] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [redirectPath, setRedirectPath] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+  
+  // Track hydration state - crucial for Next.js 15's partial hydration
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   // Setup empty arrays for multiple tickets
   const [selectedTickets, setSelectedTickets] = useState<
@@ -73,65 +98,155 @@ export default function CheckoutPage() {
     isUsingUrlParams: boolean;
   }>({ ticketTypes: [], quantities: [], isUsingUrlParams: false });
 
-  // Get URL search params once during initial render
+  // Get URL search params and check sessionStorage backup during initial render
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // First get URL params
       const searchParams = new URLSearchParams(window.location.search);
-      const ticketTypes = searchParams.getAll("ticketTypes[]");
-      const quantities = searchParams.getAll("quantities[]");
+      let ticketTypes = searchParams.getAll("ticketTypes[]");
+      let quantities = searchParams.getAll("quantities[]");
+      let hasValidParams = ticketTypes.length > 0 && quantities.length > 0;
+      
+      // Check for sessionStorage backup if URL params are invalid
+      if (!hasValidParams) {
+        try {
+          const sessionData = sessionStorage.getItem('checkout-data');
+          if (sessionData) {
+            const checkoutData = JSON.parse(sessionData);
+            console.log('Found checkout data in sessionStorage:', checkoutData);
+            
+            // Check data is valid and recent (within last 10 minutes)
+            const isRecent = checkoutData.timestamp && 
+                           (Date.now() - checkoutData.timestamp < 10 * 60 * 1000);
+            
+            if (isRecent && checkoutData.ticketType && checkoutData.quantity) {
+              // Use session data instead
+              console.log('Using sessionStorage backup for checkout data');
+              ticketTypes = [checkoutData.ticketType];
+              quantities = [String(checkoutData.quantity)];
+              hasValidParams = true;
+              
+              // Restore reservation state from session if needed
+              if (!useTicketStore.getState().hasActiveReservation()) {
+                console.log('Restoring reservation state from session data');
+                useTicketStore.getState().startReservation(
+                  checkoutData.expiry || Date.now() + 600000,
+                  checkoutData.reservationId,
+                  checkoutData.eventId,
+                  null, // eventName
+                  null  // eventBannerUrl
+                );
+              }
+            } else {
+              // Clean up old data
+              console.log('Session data is too old or invalid');
+              sessionStorage.removeItem('checkout-data');
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing sessionStorage data:', e);
+        }
+      }
 
+      // Update search params ref with our potentially updated values
       searchParamsRef.current = {
         ticketTypes,
         quantities,
-        isUsingUrlParams: ticketTypes.length > 0,
+        isUsingUrlParams: hasValidParams,
       };
-
-      // Force a re-render after setting up the search params
-      setSelectedTickets([]);
+      
+      console.log('Search params initialized:', searchParamsRef.current);
     }
   }, []);
 
   // Load ticket details either from URL or queuePosition
   useEffect(() => {
-    if (!event || !event.ticketTypes) return;
+    // Critical hydration guard - prevents any state checks or redirects before hydration is complete
+    if (!isHydrated) {
+      return; // Wait for hydration to complete before any data processing
+    }
+    
+    // Ensure essential data is loaded before making decisions.
+    // event and event.ticketTypes must be present.
+    // queuePosition can be null (no entry) or an object (entry exists). undefined means still loading.
+    if (!event || !event.ticketTypes || queuePosition === undefined) {
+      return; // Wait for essential data to load
+    }
 
     const { ticketTypes, quantities, isUsingUrlParams } = searchParamsRef.current;
 
-    // Prevent unnecessary re-renders
-    if (selectedTickets.length > 0) return;
+    // If selectedTickets is already populated correctly based on the current valid source, no need to re-process.
+    if (selectedTickets.length > 0) {
+      const urlSourceValidAndProcessed = isUsingUrlParams && ticketTypes.length > 0;
+      const queueSourceValidAndProcessed = !isUsingUrlParams && queuePosition?.status === "offered";
+      if (urlSourceValidAndProcessed || queueSourceValidAndProcessed) {
+        return;
+      }
+    }
 
-    if (isUsingUrlParams) {
-      // Multiple tickets from URL parameters
-      const ticketsFromUrl = ticketTypes.map((typeId, index) => {
-        const quantity = parseInt(quantities[index] || "1", 10);
-        const ticketType = event.ticketTypes?.find((t) => t.id === typeId);
-
-        return {
-          id: typeId,
-          name: ticketType?.name || "Ticket",
-          price: ticketType?.price || 0,
-          quantity: quantity,
-        };
-      });
+    if (isUsingUrlParams && ticketTypes.length > 0) {
+      const ticketsFromUrl = ticketTypes
+        .map((typeId, index) => {
+          const quantity = parseInt(quantities[index] || "1", 10);
+          const ticketType = event.ticketTypes?.find((t) => t.id === typeId);
+          if (!ticketType) return null; // Invalid ticketType ID from URL
+          return {
+            id: typeId,
+            name: ticketType.name,
+            price: ticketType.price || 0,
+            quantity: quantity,
+          };
+        })
+        .filter(Boolean) as typeof selectedTickets; // Filter out nulls for invalid IDs
 
       if (ticketsFromUrl.length > 0) {
         setSelectedTickets(ticketsFromUrl);
+      } else {
+        // URL params provided but all ticket IDs were invalid or resulted in no tickets
+        toast.error("Invalid ticket details provided in the URL. Please try again.");
+        setRedirectPath(`/event/${id}`);
       }
-    } else if (queuePosition?.ticketTypeId) {
-      // Single ticket from queue position
-      const ticketType = event.ticketTypes.find((t) => t.id === queuePosition.ticketTypeId);
-      if (ticketType) {
-        setSelectedTickets([
-          {
-            id: ticketType.id,
-            name: ticketType.name,
-            price: ticketType.price,
-            quantity: queuePosition.quantity || 1,
-          },
-        ]);
+    } else if (!isUsingUrlParams && queuePosition) { // User has a queue position record (not null)
+      // Check for offered status and handle both new API (ticketDetails array) and legacy API (ticketTypeId)
+      if (queuePosition.status === "offered" && queuePosition.ticketDetails) {
+        const ticketsFromQueue = queuePosition.ticketDetails.map((detail) => {
+          const ticketType = event.ticketTypes?.find(
+            (t) => t.id === detail.ticketTypeId
+          );
+          return {
+            id: detail.ticketTypeId,
+            name: ticketType?.name || "Unknown Ticket",
+            price: ticketType?.price || 0,
+            quantity: detail.quantity,
+          };
+        });
+        setSelectedTickets(ticketsFromQueue);
+      } else if (
+        queuePosition.status === "expired" ||
+        queuePosition.status === "released"
+      ) {
+        toast.error("Your ticket reservation has expired or been released.");
+        setRedirectPath(`/event/${id}`);
+      } else if (queuePosition.status !== "offered") { // e.g. 'waiting', 'cancelled', etc.
+        toast.info(
+          `Your current queue status is '${queuePosition.status}'. No tickets have been offered yet.`
+        );
+        setRedirectPath(`/event/${id}`);
       }
+    } else if (!isUsingUrlParams && queuePosition === null) {
+      // No URL params and no queue record for this user/event (explicitly null, meaning query ran and found nothing)
+      toast.info("No active reservation found. Please select tickets from the event page.");
+      setRedirectPath(`/event/${id}`);
     }
-  }, [event, queuePosition, selectedTickets.length]);
+    // Fallthrough: If isUsingUrlParams is true but ticketTypes is empty, or other edge cases,
+    // no action is taken in this effect pass, potentially relying on user action or other effects.
+  }, [event, queuePosition, id, setRedirectPath, isHydrated]);
+
+  useEffect(() => {
+    if (redirectPath) {
+      router.replace(redirectPath);
+    }
+  }, [redirectPath, router]);
 
   // Simple variables for backward compatibility
   const ticketTypeId = searchParamsRef.current.isUsingUrlParams
@@ -301,10 +416,14 @@ export default function CheckoutPage() {
   }
 
   // Verify we're using URL params or have a valid queue position
-  if (!searchParamsRef.current.isUsingUrlParams && (!queuePosition || queuePosition?.status !== "offered")) {
-    router.push(`/event/${id}`);
-    return null;
-  }
+  useEffect(() => {
+    if (!isHydrated) return; // Wait for hydration
+
+    if (!searchParamsRef.current.isUsingUrlParams && (!queuePosition || queuePosition?.status !== "offered")) {
+      // Use redirectPath state instead of direct router call
+      setRedirectPath(`/event/${id}`);
+    }
+  }, [id, queuePosition, isHydrated, searchParamsRef]);
 
   // Format event date as "Sun 1 June | 2pm"
   let formattedDate = "TBA";

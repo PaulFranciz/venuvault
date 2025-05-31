@@ -59,8 +59,8 @@ export type EventFormData = {
   category: string;
   bannerImage?: File;
   thumbnailImage?: File;
-  bannerImageUrl?: string;
-  thumbnailImageUrl?: string;
+  bannerImagePreviewUrl?: string;
+  thumbnailImagePreviewUrl?: string;
   bannerImageStorageId?: Id<"_storage">; // Added for actual storage ID
   thumbnailImageStorageId?: Id<"_storage">; // Added for thumbnail storage ID
   startDate: string;

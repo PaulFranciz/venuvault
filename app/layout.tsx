@@ -9,6 +9,7 @@ import SyncUserWithConvex from "@/components/SyncUserWithConvex";
 import PrefetchManager from "@/components/PrefetchManager";
 import { Toaster } from "sonner";
 import { AppProviders } from "@/providers/AppProviders";
+import ReservationBanner from "@/components/ReservationBanner";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -60,6 +61,7 @@ export default function RootLayout({
               <PrefetchManager />
               {children}
               <Footer />
+              <ReservationBanner />
               <Toaster richColors closeButton position="top-right" />
             </ConvexClientProvider>
           </AppProviders>

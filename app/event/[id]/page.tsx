@@ -72,15 +72,35 @@ export default function EventPage() {
 
   // Initialize reservation banner if ticket is being offered
   useEffect(() => {
-    if (queuePosition?.status === 'offered' && queuePosition.offerExpiresAt) {
-      startReservation(queuePosition.offerExpiresAt);
+    if (
+      queuePosition?.status === 'offered' &&
+      queuePosition.offerExpiresAt &&
+      queuePosition._id &&
+      event &&
+      params.id
+    ) {
+      startReservation(
+        queuePosition.offerExpiresAt,
+        queuePosition._id, // reservationId
+        params.id as Id<"events">, // eventId
+        event.name, // eventName
+        imageUrl // eventBannerUrl (already derived from event image IDs)
+      );
     } else if (!queuePosition || queuePosition.status !== 'offered') {
       // Only reset if we're not in an offered state
       if (showReservation && !queuePosition) {
         cancelReservation();
       }
     }
-  }, [queuePosition, startReservation, cancelReservation, showReservation]);
+  }, [
+  queuePosition,
+  startReservation,
+  cancelReservation,
+  showReservation,
+  event,
+  params.id,
+  imageUrl,
+]);
 
   const handleTicketSelection = (ticketTypeId: string, quantity: number) => {
     // Find the ticket type to get name and price
@@ -134,23 +154,39 @@ export default function EventPage() {
     
     // Set up reservation with 10 minute countdown
     const expiryTime = Date.now() + 10 * 60 * 1000; // 10 minutes
-    startReservation(expiryTime);
+    startReservation(
+      expiryTime,
+      null, // reservationId - not available yet, will be updated later
+      params.id as Id<"events">, // eventId
+      event?.name || "Event", // eventName
+      imageUrl // eventBannerUrl
+    );
     
-    // Trigger the join queue button with a slight delay to ensure UI has updated
-    // The modal will remain open during this process until completeReservation is called
+    // Trigger the join queue button with a longer delay to ensure UI and state are fully updated
+    // This helps prevent issues with high-performance mode where state might not persist properly
     setTimeout(() => {
       const joinQueueBtn = document.getElementById('join-queue-btn');
       if (joinQueueBtn) {
+        // Store important values in local storage as backup
+        try {
+          localStorage.setItem('ticwaka_last_reservation_time', String(Date.now()));
+          localStorage.setItem('ticwaka_event_id', params.id as string);
+        } catch (e) {
+          console.error('Failed to store backup reservation data', e);
+        }
+        
+        // Click the join queue button to complete the reservation process
         joinQueueBtn.click();
         
-        // Show success toast notification
+        // Show a single success toast notification (removed duplicates)
+        // The ReservationBanner component will show the timer, so no need for redundant UI
         toast({
           title: "Tickets Reserved",
           description: "You have 10 minutes to complete your purchase."
         });
         
         // Keep modal open to show reservation status and checkout options
-        // Don't automatically close: setTimeout(() => closeModal(), 2000);
+        // Don't automatically navigate away - let user control the flow
       } else {
         console.error('Join queue button not found');
         toast({
@@ -159,7 +195,7 @@ export default function EventPage() {
           variant: "destructive"
         });
       }
-    }, 300);
+    }, 500); // Increased delay for more reliable state persistence
   };
   
   const handleReservationExpired = () => {
