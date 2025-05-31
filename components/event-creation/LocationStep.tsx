@@ -117,26 +117,45 @@ const LocationStep: React.FC<LocationStepProps> = ({
   
   // Function to verify address using the OpenCage Geocoding API
   const verifyAddress = React.useCallback(async () => {
-    if (!formData.address) return;
+    if (!formData.address) {
+      toast.error("Please enter an address");
+      return;
+    }
     
     setIsVerifying(true);
     setIsAddressVerified(false);
     
     try {
-      // Use environment variable for the API key
-      const apiKey = process.env.NEXT_PUBLIC_OPENCAGE_API_KEY;
+      // Use the API key directly for debugging purposes
+      // In production, you should use a server-side API route for security
+      const apiKey = 'a10ac05696304bcf9c07cf7bb41102b9';
       
-      if (!apiKey) {
-        console.error('OpenCage API key is not set');
-        toast.error('API key is not configured. Please add it to your environment variables.');
+      console.log('Verifying address:', formData.address);
+      
+      // Make sure we have a valid address format for the API
+      const searchQuery = formData.address.trim();
+      const url = `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(searchQuery)}&key=${apiKey}&limit=1`;
+      
+      console.log('OpenCage API URL:', url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('OpenCage API error:', response.status, errorText);
+        toast.error(`API error: ${response.status}`, {
+          description: "There was an error contacting the geocoding service."
+        });
         return;
       }
       
-      const response = await fetch(
-        `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(formData.address)}&key=${apiKey}&limit=1`
-      );
-      
       const data = await response.json();
+      console.log('OpenCage API response:', data);
       
       if (data.results && data.results.length > 0) {
         const result = data.results[0];
