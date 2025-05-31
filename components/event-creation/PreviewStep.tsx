@@ -20,8 +20,8 @@ interface PreviewStepProps {
 
 const PreviewStep: React.FC<PreviewStepProps> = ({ onBack, onSubmit, isSubmitting, onSchedulePublish }) => {
   const { formData } = useEventForm();
-  const [bannerPreviewUrl, setBannerPreviewUrl] = useState<string | undefined>(formData.bannerImageUrl);
-  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState<string | undefined>(formData.thumbnailImageUrl);
+  const [bannerPreviewUrl, setBannerPreviewUrl] = useState<string | undefined>(formData.bannerImagePreviewUrl);
+  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState<string | undefined>(formData.thumbnailImagePreviewUrl);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false); // Added state for modal
 
   useEffect(() => {
@@ -29,23 +29,23 @@ const PreviewStep: React.FC<PreviewStepProps> = ({ onBack, onSubmit, isSubmittin
     if (formData.bannerImage instanceof File) {
       bannerUrl = URL.createObjectURL(formData.bannerImage);
       setBannerPreviewUrl(bannerUrl);
-    } else if (formData.bannerImageUrl) {
-      setBannerPreviewUrl(formData.bannerImageUrl);
+    } else if (formData.bannerImagePreviewUrl) {
+      setBannerPreviewUrl(formData.bannerImagePreviewUrl);
     }
 
     let thumbnailUrl: string | undefined;
     if (formData.thumbnailImage instanceof File) {
       thumbnailUrl = URL.createObjectURL(formData.thumbnailImage);
       setThumbnailPreviewUrl(thumbnailUrl);
-    } else if (formData.thumbnailImageUrl) {
-      setThumbnailPreviewUrl(formData.thumbnailImageUrl);
+    } else if (formData.thumbnailImagePreviewUrl) {
+      setThumbnailPreviewUrl(formData.thumbnailImagePreviewUrl);
     }
 
     return () => {
       if (bannerUrl) URL.revokeObjectURL(bannerUrl);
       if (thumbnailUrl) URL.revokeObjectURL(thumbnailUrl);
     };
-  }, [formData.bannerImage, formData.thumbnailImage, formData.bannerImageUrl, formData.thumbnailImageUrl]);
+  }, [formData.bannerImage, formData.bannerImagePreviewUrl, formData.thumbnailImage, formData.thumbnailImagePreviewUrl]);
 
   const DetailItem: React.FC<{ icon: React.ElementType; label: string; value?: string }> = ({ icon: Icon, label, value }) => (
     value ? (
