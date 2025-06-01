@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
 import { withCache } from '@/lib/cache';
@@ -6,12 +6,14 @@ import { REDIS_TTL } from '@/lib/redis';
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL || '');
 
-export async function GET(
-  request: Request,
-  context: { params: { id: string } }
-) {
-  // First, await the params to access them safely in Next.js 15
-  const { id } = await context.params;
+export async function GET(request: NextRequest) {
+  // Extract the ID from the URL pathname
+  const pathname = request.nextUrl.pathname;
+  const id = pathname.split('/')[3] || ''; // Get the user ID segment (users/[id]/tickets)
+  
+  if (!id) {
+    return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+  }
 
   const { searchParams } = new URL(request.url);
   const eventId = searchParams.get('eventId');
