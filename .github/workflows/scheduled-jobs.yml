@@ -4,6 +4,8 @@ on:
   schedule:
     # Run every 5 minutes (high-frequency for ticket operations)
     - cron: '*/5 * * * *'
+    # Run hourly for waitlist processing
+    - cron: '0 * * * *'
   
   # Allow manual triggering for testing
   workflow_dispatch:
@@ -19,11 +21,6 @@ on:
           - cleanup-reservations
           - waitlist-processing
 
-# Environment variables used by all jobs
-env:
-  API_BASE_URL: ${{ secrets.VERCEL_URL || 'https://ticwaka.vercel.app' }}
-  API_SECRET_TOKEN: ${{ secrets.API_SECRET_TOKEN }}
-
 jobs:
   # Main job to process ticket reservations/purchases (runs every 5 minutes)
   process-tickets:
@@ -33,13 +30,20 @@ jobs:
     
     steps:
       - name: Check API Token
-        if: ${{ env.API_SECRET_TOKEN == '' }}
         run: |
-          echo "::error::API_SECRET_TOKEN is not set in repository secrets"
-          exit 1
+          if [[ -z "$API_SECRET_TOKEN" ]]; then
+            echo "API_SECRET_TOKEN is not set in repository secrets"
+            exit 1
+          else
+            echo "API token is available"
+          fi
+        env:
+          API_SECRET_TOKEN: ${{ secrets.API_SECRET_TOKEN }}
 
       - name: Process Ticket Queue
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
+        env:
+          API_SECRET_TOKEN: ${{ secrets.API_SECRET_TOKEN }}
         with:
           script: |
             const MAX_RETRIES = 3;
@@ -57,6 +61,7 @@ jobs:
                   method,
                   headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.API_SECRET_TOKEN}`,
                     'x-api-key': process.env.API_SECRET_TOKEN
                   }
                 });
@@ -83,9 +88,9 @@ jobs:
             }
             
             try {
-              const baseUrl = process.env.API_BASE_URL;
+              const baseUrl = 'https://ticwaka.vercel.app';
               const endpoint = '/api/cron/process-queues';
-              const url = `${baseUrl}${endpoint}?token=${process.env.API_SECRET_TOKEN}`;
+              const url = `${baseUrl}${endpoint}`;
               
               const result = await callApiWithRetry(url);
               console.log('✅ Ticket queue processing completed successfully');
@@ -94,7 +99,7 @@ jobs:
               process.exit(1);
             }
 
-  # Cleanup job to remove expired reservations (runs every 15 minutes)
+  # Cleanup job to remove expired reservations
   cleanup-reservations:
     name: Cleanup Expired Reservations
     runs-on: ubuntu-latest
@@ -103,18 +108,21 @@ jobs:
     
     steps:
       - name: Cleanup Expired Reservations
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
+        env:
+          API_SECRET_TOKEN: ${{ secrets.API_SECRET_TOKEN }}
         with:
           script: |
             try {
-              const baseUrl = process.env.API_BASE_URL;
+              const baseUrl = 'https://ticwaka.vercel.app';
               const endpoint = '/api/cron/cleanup-reservations';
-              const url = `${baseUrl}${endpoint}?token=${process.env.API_SECRET_TOKEN}`;
+              const url = `${baseUrl}${endpoint}`;
               
               const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.API_SECRET_TOKEN}`,
                   'x-api-key': process.env.API_SECRET_TOKEN
                 }
               });
@@ -135,22 +143,25 @@ jobs:
   waitlist-processing:
     name: Process Event Waitlists
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'schedule' && github.event.schedule == '0 * * * *' || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'waitlist-processing' }}
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'waitlist-processing' }}
     
     steps:
       - name: Process Waitlist Entries
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
+        env:
+          API_SECRET_TOKEN: ${{ secrets.API_SECRET_TOKEN }}
         with:
           script: |
             try {
-              const baseUrl = process.env.API_BASE_URL;
+              const baseUrl = 'https://ticwaka.vercel.app';
               const endpoint = '/api/cron/process-waitlist';
-              const url = `${baseUrl}${endpoint}?token=${process.env.API_SECRET_TOKEN}`;
+              const url = `${baseUrl}${endpoint}`;
               
               const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.API_SECRET_TOKEN}`,
                   'x-api-key': process.env.API_SECRET_TOKEN
                 }
               });
@@ -166,5 +177,3 @@ jobs:
               console.error('❌ Failed to process waitlist:', error.message);
               // Don't fail the workflow if waitlist processing fails
             }
-
-  # Note: We removed the Slack notification job as it's not being used

@@ -8,6 +8,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)', // Clerk sign-in routes
   '/sign-up(.*)', // Clerk sign-up routes
   '/api/webhooks/paystack(.*)', // Paystack webhook
+  '/api/cron/(.*)', // Cron job API endpoints - token-based auth instead of Clerk
   '/validate-ticket/(.*)', // Ticket validation page
   '/creators/overview', // Creator landing page
   '/creators/(.*)', // All creators pages

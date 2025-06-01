@@ -3,7 +3,12 @@
 import React, { useState, useEffect } from "react";
 import { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
+// Import our new cache-resilient hooks
+import { useEventWithCache } from "@/hooks/useEventWithCache";
+import { useEventAvailabilityWithCache } from "@/hooks/useEventAvailabilityWithCache";
+import { useUserTicketsWithCache } from "@/hooks/useUserTicketsWithCache";
+import { useQueuePositionWithCache } from "@/hooks/useQueuePositionWithCache";
 import { SignInButton, useUser } from "@clerk/nextjs";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
@@ -27,20 +32,11 @@ export default function EventPage() {
   const { toast } = useToast();
   const { user } = useUser();
   const params = useParams();
-  const event = useQuery(api.events.getById, {
-    eventId: params.id as Id<"events">,
-  });
-  const availability = useQuery(api.events.getEventAvailability, {
-    eventId: params.id as Id<"events">,
-  });
-  const userTicket = useQuery(api.tickets.getUserTicketForEvent, {
-    eventId: params.id as Id<"events">,
-    userId: user?.id ?? "",
-  });
-  const queuePosition = useQuery(api.waitingList.getQueuePosition, {
-    eventId: params.id as Id<"events">,
-    userId: user?.id ?? "",
-  });
+  // Use our new cache-resilient hooks that combine Convex with TanStack Query
+  const { event, isLoading: eventLoading } = useEventWithCache(params.id as string);
+  const availability = useEventAvailabilityWithCache(params.id as string);
+  const userTicket = useUserTicketsWithCache(params.id as string, user?.id ?? "");
+  const queuePosition = useQueuePositionWithCache(params.id as string, user?.id ?? "");
   const imageUrl = useStorageUrl(event?.imageStorageId || event?.thumbnailImageStorageId);
   
   // Use Zustand store for ticket reservation state
@@ -104,7 +100,7 @@ export default function EventPage() {
 
   const handleTicketSelection = (ticketTypeId: string, quantity: number) => {
     // Find the ticket type to get name and price
-    const ticketType = event?.ticketTypes?.find(t => t.id === ticketTypeId);
+    const ticketType = event?.ticketTypes?.find((t: any) => t.id === ticketTypeId);
     if (ticketType) {
       setSelectedTicket(ticketTypeId, quantity, ticketType.name, ticketType.price);
     }
@@ -132,7 +128,7 @@ export default function EventPage() {
     }
     
     // Verify the ticket type exists and has availability
-    const ticketType = event?.ticketTypes?.find(t => t.id === ticketTypeId);
+    const ticketType = event?.ticketTypes?.find((t: any) => t.id === ticketTypeId);
     if (!ticketType || (ticketType.quantity !== undefined && ticketType.quantity < quantity)) {
       toast({
         title: "Tickets unavailable",
@@ -216,9 +212,9 @@ export default function EventPage() {
 
     if (event.ticketTypes && event.ticketTypes.length > 0) {
       // Filter visible ticket types
-      const visibleTypes = event.ticketTypes.filter(t => !t.isHidden);
+      const visibleTypes = event.ticketTypes.filter((t: any) => !t.isHidden);
       if (visibleTypes.length > 0) {
-        const prices = visibleTypes.map(t => Number(t.price));
+        const prices = visibleTypes.map((t: any) => Number(t.price));
         return {
           min: Math.min(...prices),
           max: Math.max(...prices),

@@ -21,6 +21,7 @@ import { useStorageUrl } from "@/lib/utils";
 import { dialCodes } from "@/lib/dialCodes";
 import CountUp from "react-countup";
 import { toast } from "sonner";
+import useTicketStore from '@/store/ticketStore';
 
 interface TicketRecipient {
   name: string;
@@ -71,7 +72,7 @@ export default function CheckoutPage() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [dialCode, setDialCode] = useState("+234"); // default Nigeria
   const [isAgreedToTerms, setIsAgreedToTerms] = useState(false);
-  const [recipients, setRecipients] = useState<TicketRecipient[]>([]);
+  // Removed recipient UI functionality
   const [sendToOthers, setSendToOthers] = useState(false);
   const [discount, setDiscount] = useState<DiscountInfo | null>(null);
   const [originalTotal, setOriginalTotal] = useState<number>(0);
@@ -240,7 +241,7 @@ export default function CheckoutPage() {
     }
     // Fallthrough: If isUsingUrlParams is true but ticketTypes is empty, or other edge cases,
     // no action is taken in this effect pass, potentially relying on user action or other effects.
-  }, [event, queuePosition, id, setRedirectPath, isHydrated]);
+  }, [event, queuePosition, id, setRedirectPath, isHydrated, selectedTickets]);
 
   useEffect(() => {
     if (redirectPath) {
@@ -293,43 +294,8 @@ export default function CheckoutPage() {
     if (isLoaded && isSignedIn && user) {
       setFullName(user.fullName || "");
       setEmail(user.primaryEmailAddress?.emailAddress || "");
-
-      // Initialize the first recipient with the user's info
-      if (quantity > 1 && recipients.length === 0) {
-        const initialRecipients: TicketRecipient[] = [
-          {
-            name: user.fullName || "",
-            email: user.primaryEmailAddress?.emailAddress || "",
-          },
-        ];
-
-        // Add empty slots for additional recipients
-        for (let i = 1; i < quantity; i++) {
-          initialRecipients.push({ name: "", email: "" });
-        }
-
-        setRecipients(initialRecipients);
-      }
     }
-  }, [isLoaded, isSignedIn, user, quantity, recipients.length]);
-
-  const handleAddRecipient = () => {
-    if (recipients.length < quantity) {
-      setRecipients([...recipients, { name: "", email: "" }]);
-    }
-  };
-
-  const handleRemoveRecipient = (index: number) => {
-    const newRecipients = [...recipients];
-    newRecipients.splice(index, 1);
-    setRecipients(newRecipients);
-  };
-
-  const handleRecipientChange = (index: number, field: keyof TicketRecipient, value: string) => {
-    const newRecipients = [...recipients];
-    newRecipients[index] = { ...newRecipients[index], [field]: value };
-    setRecipients(newRecipients);
-  };
+  }, [isLoaded, isSignedIn, user]);
 
   const handleDiscountApplied = (discountInfo: DiscountInfo) => {
     // Store current total before applying discount for animation
@@ -352,17 +318,6 @@ export default function CheckoutPage() {
 
     setIsLoading(true);
     setError(null);
-
-    // If sending tickets to others, validate their info
-    if (sendToOthers) {
-      for (const recipient of recipients) {
-        if (!recipient.name || !recipient.email) {
-          setError("Please fill out all recipient information");
-          setIsLoading(false);
-          return;
-        }
-      }
-    }
 
     // Check if we have tickets selected
     if (selectedTickets.length === 0) {
@@ -391,7 +346,6 @@ export default function CheckoutPage() {
           email: email,
           phone: fullPhone,
         },
-        recipients: sendToOthers ? recipients : undefined,
       });
 
       if (result?.authorizationUrl) {
@@ -414,16 +368,6 @@ export default function CheckoutPage() {
       </div>
     );
   }
-
-  // Verify we're using URL params or have a valid queue position
-  useEffect(() => {
-    if (!isHydrated) return; // Wait for hydration
-
-    if (!searchParamsRef.current.isUsingUrlParams && (!queuePosition || queuePosition?.status !== "offered")) {
-      // Use redirectPath state instead of direct router call
-      setRedirectPath(`/event/${id}`);
-    }
-  }, [id, queuePosition, isHydrated, searchParamsRef]);
 
   // Format event date as "Sun 1 June | 2pm"
   let formattedDate = "TBA";
@@ -534,67 +478,6 @@ export default function CheckoutPage() {
               </Label>
             </div>
           </div>
-
-          {/* Recipients, Discount etc – reuse existing sections rendered conditionally */}
-          {quantity > 1 && (
-            <div className="space-y-4 bg-white p-6 shadow rounded border border-gray-100">
-              {/* existing Recipients UI here - reuse components */}
-              {recipients.map((recipient, index) => (
-                <div key={index} className="border border-gray-800 rounded-lg p-3 bg-gray-800">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-300">Recipient {index + 1}</span>
-
-                    {index > 0 && (
-                      <button
-                        onClick={() => handleRemoveRecipient(index)}
-                        className="text-red-400 p-1"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <div>
-                      <Label htmlFor={`name-${index}`} className="text-gray-400 mb-1 block text-sm">
-                        Name
-                      </Label>
-                      <Input
-                        id={`name-${index}`}
-                        value={recipient.name}
-                        onChange={(e) => handleRecipientChange(index, "name", e.target.value)}
-                        required
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor={`email-${index}`} className="text-gray-400 mb-1 block text-sm">
-                        Email
-                      </Label>
-                      <Input
-                        id={`email-${index}`}
-                        type="email"
-                        value={recipient.email}
-                        onChange={(e) => handleRecipientChange(index, "email", e.target.value)}
-                        required
-                        className="bg-gray-700 border-gray-600 text-white"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {recipients.length < quantity && (
-                <button
-                  className="w-full py-2 border border-gray-700 rounded-lg text-gray-300 flex items-center justify-center gap-2 hover:bg-gray-800 transition-colors"
-                  onClick={handleAddRecipient}
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Another Recipient
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Discount */}
           {!isFreeEvent && (

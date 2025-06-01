@@ -8,7 +8,7 @@ import { api } from '@/convex/_generated/api';
 
 // This token is used to prevent unauthorized access to this endpoint
 // It should match the token used in your cron job configuration
-const CRON_SECRET = process.env.CRON_SECRET || 'your-secret-token';
+const CRON_SECRET = process.env.API_SECRET_TOKEN || 'Zy106X9rjFYKY6DxE9WVWrNF5nNbiZE1nW3x119Llb0';
 
 // Queue names
 const QUEUES = {
@@ -177,11 +177,56 @@ const processNotifications = async (): Promise<any> => {
 // Main handler for the serverless function
 export async function GET(request: NextRequest) {
   try {
-    // Verify authorization token from query parameter
-    const token = request.nextUrl.searchParams.get('token');
-    if (token !== CRON_SECRET) {
+    console.log('Request received:', {
+      method: request.method,
+      url: request.url,
+      headers: {
+        'x-api-key': request.headers.get('x-api-key') ? '[PRESENT]' : '[MISSING]',
+        'authorization': request.headers.get('Authorization') ? '[PRESENT]' : '[MISSING]',
+      }
+    });
+    
+    // Check for token in multiple places (query param, headers)
+    const queryToken = request.nextUrl.searchParams.get('token');
+    const authHeader = request.headers.get('Authorization');
+    const apiKeyHeader = request.headers.get('x-api-key');
+    
+    // Extract Bearer token if present
+    const bearerToken = authHeader?.startsWith('Bearer ') 
+      ? authHeader.substring(7) 
+      : null;
+    
+    console.log('Debug Auth:', { 
+      expectedToken: CRON_SECRET.substring(0, 4) + '...[REDACTED]',
+      receivedApiKey: apiKeyHeader ? apiKeyHeader.substring(0, 4) + '...[REDACTED]' : null,
+      receivedBearer: bearerToken ? bearerToken.substring(0, 4) + '...[REDACTED]' : null,
+      receivedQuery: queryToken ? queryToken.substring(0, 4) + '...[REDACTED]' : null,
+      tokenLengths: {
+        expected: CRON_SECRET.length,
+        apiKey: apiKeyHeader?.length,
+        bearer: bearerToken?.length,
+        query: queryToken?.length
+      },
+      exactMatch: {
+        apiKey: apiKeyHeader === CRON_SECRET,
+        bearer: bearerToken === CRON_SECRET,
+        query: queryToken === CRON_SECRET
+      }
+    });
+    
+    // Check if any of the tokens match
+    const isValidToken = [
+      queryToken,
+      bearerToken,
+      apiKeyHeader
+    ].some(token => token === CRON_SECRET);
+    
+    if (!isValidToken) {
+      console.log('Token validation failed');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    
+    console.log('Token validation succeeded - attempting Redis connection');
 
     // Get queue statistics before processing
     const stats = await getQueueStats();
@@ -208,11 +253,44 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error processing queues:', error);
+    
+    // Specific error handling
+    if (error instanceof Error) {
+      const errorMessage = error.message;
+      
+      // Check for Redis connection issues
+      if (errorMessage.includes('ECONNREFUSED') || 
+          errorMessage.includes('Redis connection') ||
+          errorMessage.includes('connect ETIMEDOUT')) {
+        console.log('Redis connection error detected');
+        return NextResponse.json(
+          { error: 'Redis connection failed', message: errorMessage },
+          { status: 500 }
+        );
+      }
+      
+      // Check for BullMQ errors
+      if (errorMessage.includes('Bull') || errorMessage.includes('Queue')) {
+        console.log('BullMQ error detected');
+        return NextResponse.json(
+          { error: 'Queue processing error', message: errorMessage },
+          { status: 500 }
+        );
+      }
+    }
+    
+    // Generic error response
     return NextResponse.json(
       { error: 'Failed to process queues', message: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }
+}
+
+// POST handler - reusing the same logic as GET
+export async function POST(request: NextRequest) {
+  // Simply call the GET handler with the same request
+  return GET(request);
 }
 
 // Get statistics for all queues

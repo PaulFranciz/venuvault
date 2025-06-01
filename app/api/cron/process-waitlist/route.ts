@@ -4,16 +4,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
 
-// Verify the API token for security
+// Verify the API token for security - checks multiple places
 const validateToken = (request: NextRequest) => {
-  const token = request.nextUrl.searchParams.get('token');
   // Use environment variable for the secret token
   const secretToken = process.env.API_SECRET_TOKEN || 'your-secret-token';
   
-  if (!token || token !== secretToken) {
-    return false;
-  }
-  return true;
+  // Check for token in multiple places (query param, headers)
+  const queryToken = request.nextUrl.searchParams.get('token');
+  const authHeader = request.headers.get('Authorization');
+  const apiKeyHeader = request.headers.get('x-api-key');
+  
+  // Extract Bearer token if present
+  const bearerToken = authHeader?.startsWith('Bearer ') 
+    ? authHeader.substring(7) 
+    : null;
+  
+  // Check if any of the tokens match
+  return [
+    queryToken,
+    bearerToken,
+    apiKeyHeader
+  ].some(token => token && token === secretToken);
 };
 
 // Get Convex client for database operations
@@ -30,15 +41,31 @@ const getConvexClient = () => {
  * This is called by the GitHub Actions workflow (hourly)
  */
 export async function POST(request: NextRequest) {
-  console.log('Starting waitlist processing for events with availability...');
-  
-  // Validate the request token
-  if (!validateToken(request)) {
-    console.error('Invalid or missing token');
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Begin with direct debugging output
+  console.log('Process-waitlist API endpoint hit with', request.method);
   
   try {
+    // Direct token check
+    const expectedToken = "Zy106X9rjFYKY6DxE9WVWrNF5nNbiZE1nW3x119Llb0";
+    const apiKeyHeader = request.headers.get('x-api-key');
+    
+    console.log('Auth debug:', {
+      expectedTokenLength: expectedToken.length,
+      receivedTokenLength: apiKeyHeader?.length,
+      headerPresent: apiKeyHeader ? 'yes' : 'no',
+      headerFirstChars: apiKeyHeader ? apiKeyHeader.substring(0, 4) : 'none',
+      expectedFirstChars: expectedToken.substring(0, 4)
+    });
+    
+    // Simple direct token comparison
+    if (apiKeyHeader !== expectedToken) {
+      console.log('Token validation failed - direct comparison');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    console.log('Token validation succeeded - direct comparison');
+    console.log('Starting waitlist processing for events with availability...');
+    
     const convex = getConvexClient();
     
     // Call the Convex mutation to process waitlist entries

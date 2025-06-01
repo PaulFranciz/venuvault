@@ -32,13 +32,36 @@ export function createRedisClient() {
     return {
       get: async (key: string) => {
         const result = await redisClient.get(key);
-        return result ? JSON.parse(result) : null;
+        if (!result) return null;
+        
+        try {
+          return JSON.parse(result);
+        } catch (err) {
+          console.error(`Failed to parse Redis value for key ${key}:`, err);
+          return result; // Return raw string if parsing fails
+        }
       },
       set: async (key: string, value: any, options?: { ex?: number }) => {
+        let serializedValue;
+        
+        try {
+          // Handle non-serializable values (like [object Object] strings)
+          if (typeof value === 'string' && value === '[object Object]') {
+            console.warn(`Attempting to cache non-serializable string '[object Object]' for key ${key}`);
+            serializedValue = JSON.stringify({});
+          } else {
+            serializedValue = JSON.stringify(value);
+          }
+        } catch (err) {
+          console.error(`Failed to serialize value for Redis key ${key}:`, err);
+          // Fallback to empty object rather than failing
+          serializedValue = JSON.stringify({});
+        }
+        
         if (options?.ex) {
-          await redisClient.set(key, JSON.stringify(value), 'EX', options.ex);
+          await redisClient.set(key, serializedValue, 'EX', options.ex);
         } else {
-          await redisClient.set(key, JSON.stringify(value));
+          await redisClient.set(key, serializedValue);
         }
         return 'OK';
       },
