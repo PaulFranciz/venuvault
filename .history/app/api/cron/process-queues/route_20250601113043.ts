@@ -8,32 +8,7 @@ import { api } from '@/convex/_generated/api';
 
 // This token is used to prevent unauthorized access to this endpoint
 // It should match the token used in your cron job configuration
-const CRON_SECRET = process.env.API_SECRET_TOKEN;
-
-// Token validation function
-const validateToken = (request: NextRequest) => {
-  if (!CRON_SECRET) {
-    console.error('API_SECRET_TOKEN environment variable is not set');
-    return false;
-  }
-  
-  // Check for token in multiple places (query param, headers)
-  const queryToken = request.nextUrl.searchParams.get('token');
-  const authHeader = request.headers.get('Authorization');
-  const apiKeyHeader = request.headers.get('x-api-key');
-  
-  // Extract Bearer token if present
-  const bearerToken = authHeader?.startsWith('Bearer ') 
-    ? authHeader.substring(7) 
-    : null;
-  
-  // Check if any of the tokens match
-  return [
-    queryToken,
-    bearerToken,
-    apiKeyHeader
-  ].some(token => token && token === CRON_SECRET);
-};
+const CRON_SECRET = process.env.API_SECRET_TOKEN || 'Zy106X9rjFYKY6DxE9WVWrNF5nNbiZE1nW3x119Llb0';
 
 // Queue names
 const QUEUES = {
@@ -202,14 +177,51 @@ const processNotifications = async (): Promise<any> => {
 // Main handler for the serverless function
 export async function GET(request: NextRequest) {
   try {
-    console.log('Process-queues API endpoint hit with', request.method);
-    console.log('Request headers:', {
-      'x-api-key': request.headers.get('x-api-key') ? '[PRESENT]' : '[MISSING]',
-      'authorization': request.headers.get('Authorization') ? '[PRESENT]' : '[MISSING]',
+    console.log('Request received:', {
+      method: request.method,
+      url: request.url,
+      headers: {
+        'x-api-key': request.headers.get('x-api-key') ? '[PRESENT]' : '[MISSING]',
+        'authorization': request.headers.get('Authorization') ? '[PRESENT]' : '[MISSING]',
+      }
     });
     
-    // Validate token using standardized method
-    if (!validateToken(request)) {
+    // Check for token in multiple places (query param, headers)
+    const queryToken = request.nextUrl.searchParams.get('token');
+    const authHeader = request.headers.get('Authorization');
+    const apiKeyHeader = request.headers.get('x-api-key');
+    
+    // Extract Bearer token if present
+    const bearerToken = authHeader?.startsWith('Bearer ') 
+      ? authHeader.substring(7) 
+      : null;
+    
+    console.log('Debug Auth:', { 
+      expectedToken: CRON_SECRET.substring(0, 4) + '...[REDACTED]',
+      receivedApiKey: apiKeyHeader ? apiKeyHeader.substring(0, 4) + '...[REDACTED]' : null,
+      receivedBearer: bearerToken ? bearerToken.substring(0, 4) + '...[REDACTED]' : null,
+      receivedQuery: queryToken ? queryToken.substring(0, 4) + '...[REDACTED]' : null,
+      tokenLengths: {
+        expected: CRON_SECRET.length,
+        apiKey: apiKeyHeader?.length,
+        bearer: bearerToken?.length,
+        query: queryToken?.length
+      },
+      exactMatch: {
+        apiKey: apiKeyHeader === CRON_SECRET,
+        bearer: bearerToken === CRON_SECRET,
+        query: queryToken === CRON_SECRET
+      }
+    });
+    
+    // Check if any of the tokens match
+    const isValidToken = [
+      queryToken,
+      bearerToken,
+      apiKeyHeader
+    ].some(token => token === CRON_SECRET);
+    
+    if (!isValidToken) {
       console.log('Token validation failed');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

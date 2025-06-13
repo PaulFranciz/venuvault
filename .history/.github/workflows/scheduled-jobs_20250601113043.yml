@@ -3,17 +3,17 @@ name: Scheduled Queue Processing
 on:
   schedule:
     # Run every 5 minutes (high-frequency for ticket operations)
-    - cron: "*/5 * * * *"
+    - cron: '*/5 * * * *'
     # Run hourly for waitlist processing
-    - cron: "0 * * * *"
-
+    - cron: '0 * * * *'
+  
   # Allow manual triggering for testing
   workflow_dispatch:
     inputs:
       job_to_run:
-        description: "Specify which job to run (all, process-tickets, cleanup-reservations, waitlist-processing)"
+        description: 'Specify which job to run (all, process-tickets, cleanup-reservations, waitlist-processing)'
         required: true
-        default: "all"
+        default: 'all'
         type: choice
         options:
           - all
@@ -27,7 +27,7 @@ jobs:
     name: Process Ticket Queue
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'schedule' || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'process-tickets' }}
-
+    
     steps:
       - name: Check API Token
         run: |
@@ -48,11 +48,11 @@ jobs:
           script: |
             const MAX_RETRIES = 3;
             const RETRY_DELAY_MS = 3000;
-
+            
             async function sleep(ms) {
               return new Promise(resolve => setTimeout(resolve, ms));
             }
-
+            
             async function callApiWithRetry(url, method = 'POST', retries = MAX_RETRIES) {
               try {
                 console.log(`Calling ${method} ${url}`);
@@ -86,7 +86,7 @@ jobs:
                 }
               }
             }
-
+            
             try {
               const baseUrl = 'https://ticwaka.vercel.app';
               const endpoint = '/api/cron/process-queues';
@@ -105,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: process-tickets
     if: ${{ github.event_name == 'schedule' || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'cleanup-reservations' }}
-
+    
     steps:
       - name: Cleanup Expired Reservations
         uses: actions/github-script@v7
@@ -143,8 +143,8 @@ jobs:
   waitlist-processing:
     name: Process Event Waitlists
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'schedule' || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'waitlist-processing' }}
-
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'waitlist-processing' }}
+    
     steps:
       - name: Process Waitlist Entries
         uses: actions/github-script@v7

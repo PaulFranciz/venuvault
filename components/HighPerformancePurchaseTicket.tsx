@@ -6,7 +6,7 @@ import { useUser } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
 import { useQuery } from "convex/react";
 import ReleaseTicket from "./ReleaseTicket";
-import { Ticket, LoaderCircle, Plus, Minus, Users, Clock, AlertCircle } from "lucide-react";
+import { Ticket, LoaderCircle, Plus, Minus, Users, Clock, AlertCircle, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useQueueSystem } from "@/hooks/queries/useQueueSystem";
 import { useEvent, useEventAvailability } from "@/hooks/queries/useEventQueries";
@@ -55,6 +55,7 @@ export default function HighPerformancePurchaseTicket({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reservationState, setReservationState] = useState<ReservationState>('idle');
+  const [canReleaseTicket, setCanReleaseTicket] = useState(false);
   
   // Multiple ticket selection state
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -109,154 +110,198 @@ export default function HighPerformancePurchaseTicket({
     }
   }, [ticketTypeId, event?.ticketTypes, quantities, showTicketSelector]);
 
-  useEffect(() => {
-    const calculateTimeRemaining = () => {
-      if (isExpired) {
-        setTimeRemaining("Expired");
-        return;
-      }
-
-      const diff = offerExpiresAt - Date.now();
-      const minutes = Math.floor(diff / 1000 / 60);
-      const seconds = Math.floor((diff / 1000) % 60);
-
-      if (minutes > 0) {
-        setTimeRemaining(
-          `${minutes} minute${minutes === 1 ? "" : "s"} ${seconds} second${
-            seconds === 1 ? "" : "s"
-          }`
-        );
-      } else {
-        setTimeRemaining(`${seconds} second${seconds === 1 ? "" : "s"}`);
-      }
-    };
-
-    if (offerExpiresAt > 0) {
-        calculateTimeRemaining();
-        const interval = setInterval(calculateTimeRemaining, 1000);
-        return () => clearInterval(interval);
-    } else {
-        setTimeRemaining("--:--");
+  // Calculate time remaining in minutes and seconds
+  const calculateTimeRemaining = () => {
+    if (!queuePosition?.offerExpiresAt) {
+      setTimeRemaining("");
+      return;
     }
-  }, [offerExpiresAt, isExpired]);
+
+    const now = Date.now();
+    const expiryTime = queuePosition.offerExpiresAt;
+    const diff = expiryTime - now;
+
+    if (diff <= 0) {
+      setTimeRemaining("Expired");
+      return;
+    }
+
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    setTimeRemaining(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+  };
+
+  useEffect(() => {
+    calculateTimeRemaining();
+    const interval = setInterval(calculateTimeRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [queuePosition]);
+  
+  // Release a reserved ticket
+  const releaseReservation = async () => {
+    if (!reservationId) return;
+    
+    try {
+      setIsLoading(true);
+      // Call the release endpoint
+      const response = await fetch(`/api/queue/release-ticket?id=${reservationId}`, {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to release ticket');
+      }
+      
+      // Reset state
+      setReservationId(null);
+      setReservationState('idle');
+      setCanReleaseTicket(false);
+      setError(null);
+      
+      // Show success message
+      toast.success('Your ticket has been released and is available for others');
+    } catch (error) {
+      console.error('Error releasing ticket:', error);
+      toast.error('Unable to release your ticket. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Increment quantity for a ticket type
   const incrementQuantity = (typeId: string) => {
-    setQuantities(prev => {
-      const current = prev[typeId] || 0;
-      // Check against available quantity
-      const ticketType = event?.ticketTypes?.find(t => t.id === typeId);
-      if (ticketType && ticketType.quantity !== undefined && current >= ticketType.quantity) {
-        toast.error(`Sorry, only ${ticketType.quantity} tickets available.`);
-        return prev;
-      }
-      return { ...prev, [typeId]: current + 1 };
+    setQuantities((prev) => {
+      const currentQty = prev[typeId] || 0;
+      const maxQty = 10; // Set a reasonable maximum per ticket type
+      return {
+        ...prev,
+        [typeId]: Math.min(currentQty + 1, maxQty)
+      };
     });
   };
-
+  
   // Decrement quantity for a ticket type
   const decrementQuantity = (typeId: string) => {
-    setQuantities(prev => {
-      const current = prev[typeId] || 0;
-      if (current <= 1) {
-        const newQuantities = { ...prev };
-        delete newQuantities[typeId];
-        return newQuantities;
-      }
-      return { ...prev, [typeId]: current - 1 };
+    setQuantities((prev) => {
+      const currentQty = prev[typeId] || 0;
+      return {
+        ...prev,
+        [typeId]: Math.max(currentQty - 1, 0)
+      };
     });
   };
 
   // Enhanced purchase handler using Redis + BullMQ
   const handlePurchase = async () => {
     if (!user) {
-      toast.error("Please sign in to purchase tickets");
+      // User is not authenticated, redirect to sign in
+      router.push("/sign-in");
       return;
     }
     
-    if (isExpired) {
-      toast.error("This offer has expired");
+    if (reservationState === 'reserved') {
+      // Already reserved, redirect to checkout
+      router.push(`/checkout/${eventId}?reservation=${reservationId}`);
       return;
     }
     
-    // If we already have a queue position, proceed to checkout
-    if (queuePosition && queuePosition.status === "offered") {
-      // Ensure navigation happens outside of render cycle
-      setTimeout(() => {
-        router.push(`/checkout/${eventId}`);
-      }, 0);
-      return;
-    }
-
-    // Check if we have selected any tickets
-    if (totalTickets === 0 && !quantities[selectedTicketTypeId || '']) {
-      toast.error("Please select at least one ticket");
-      return;
-    }
+    setIsLoading(true);
+    setError(null);
+    setReservationState('processing');
     
-    // If no queue position, need to reserve a ticket using the high-performance system
     try {
-      setIsLoading(true);
-      setError(null);
-      setReservationState('processing');
+      // Get all selected ticket types with quantities
+      const selectedTickets = Object.entries(quantities)
+        .filter(([_, qty]) => qty > 0)
+        .map(([typeId, quantity]) => ({ typeId, quantity }));
       
-      // Prepare ticket selections - either from quantities state or fallback to selected ticket type
-      let ticketSelections;
-      
-      if (totalTickets > 0) {
-        // Use multi-ticket selection
-        ticketSelections = Object.entries(quantities).map(([typeId, qty]) => ({
-          ticketTypeId: typeId,
-          quantity: qty
-        }));
-      } else {
-        // Fallback to single ticket selection
-        ticketSelections = [{
-          ticketTypeId: selectedTicketTypeId as string,
-          quantity: quantity
-        }];
+      if (selectedTickets.length === 0) {
+        throw new Error("Please select at least one ticket");
       }
       
-      // Show toast notification to explain the reservation process
-      toast.success(
-        "Securing your tickets for 8 minutes! Complete your purchase before they expire.",
-        { duration: 5000 }
-      );
-      
-      // For multiple tickets, we need to use the primary ticket in the API
-      // and build a URL with all ticket selections for checkout
-      const result = await execute(() => 
-        reserveTicket.mutateAsync({
+      // Define the expected return type for better TypeScript support
+      type ReservationResult = {
+        success: boolean;
+        jobId?: string;
+        error?: string;
+        processingPath?: string;
+      };
+
+      // Execute the reservation with circuit breaker pattern
+      const reservationResult = await execute(async () => {
+        if (selectedTickets.length === 0) {
+          return { success: false, error: "No tickets selected" };
+        }
+        
+        // Use mutateAsync instead of direct function call
+        const result = await reserveTicket.mutateAsync({
           eventId: eventId as string,
-          ticketTypeId: ticketSelections[0].ticketTypeId,
-          quantity: ticketSelections[0].quantity
-        })
-      );
+          ticketTypeId: selectedTickets[0].typeId, // Use first ticket's type ID
+          quantity: selectedTickets[0].quantity // Use first ticket's quantity
+        });
+        
+        // Cast the result to our expected type
+        return result as ReservationResult;
+      });
       
-      if (result?.jobId) {
-        setReservationId(result.jobId);
+      if (reservationResult && reservationResult.success && reservationResult.jobId) {
+        // Ensure jobId is not undefined before setting it
+        setReservationId(reservationResult.jobId);
         setReservationState('reserved');
+        setCanReleaseTicket(true); // Enable release button
+        toast.success("Tickets reserved! Complete your purchase now.");
         
-        // Build ticket params for checkout URL
-        const ticketParams = ticketSelections
-          .map(selection => `ticketTypes[]=${encodeURIComponent(selection.ticketTypeId)}&quantities[]=${encodeURIComponent(selection.quantity)}`)
-          .join('&');
+        // Redirect to checkout with the reservation ID
+        router.push(`/checkout/${eventId}?reservation=${reservationResult.jobId}`);
+      } else {
+        // Handle different error cases with user-friendly messages
+        if (reservationResult.error === 'SOLD_OUT') {
+          setError("Sorry, these tickets are no longer available. All tickets have been sold.");
+          toast.error("All tickets for this event have been sold out");
+        } else if (reservationResult.error === 'QUEUE_POSITION_EXPIRED') {
+          setError("Your reservation time has expired. Please try again with a fresh selection.");
+          toast.error("Reservation time expired");
+        } else if (reservationResult.error === 'TIMEOUT') {
+          setError("The server is experiencing high demand. Please try again in a few moments.");
+          toast.error("Server is busy - please try again shortly");
+        } else if (reservationResult.error === 'INSUFFICIENT_TICKETS') {
+          setError("There aren't enough tickets left to fulfill your request. Please select fewer tickets.");
+          toast.error("Not enough tickets available");
+        } else if (reservationResult.error === 'RESERVATION_FAILED') {
+          setError("We couldn't reserve your tickets. This could be due to high demand. Please try again.");
+          toast.error("Reservation failed - please retry");
+        } else {
+          setError(reservationResult.error || "Failed to reserve tickets. Please try again.");
+          toast.error("Reservation error - please try again");
+        }
         
-        setTimeout(() => {
-          router.push(`/checkout/${eventId}?${ticketParams}`);
-        }, 1000);
+        setReservationState('error');
       }
-    } catch (error: any) {
-      setError(error.message || "Failed to reserve ticket");
+    } catch (error) {
+      console.error("Error reserving tickets:", error);
+      let errorMessage = "An unexpected error occurred. Please try again.";
+      
+      // Handle different error types with user-friendly messages
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          errorMessage = "The server is busy processing requests. Please try again in a moment.";
+        } else if (error.message.includes('network')) {
+          errorMessage = "Please check your internet connection and try again.";
+        } else if (error.message.includes('sold out') || error.message.includes('available')) {
+          errorMessage = "These tickets are no longer available. Someone may have purchased them just now.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      setError(errorMessage);
       setReservationState('error');
-      toast.error(`Reservation failed: ${error.message}`);
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // No duplicate declaration needed since we already defined reservationState above
-  
   // Track job status and update reservation state
   useEffect(() => {
     if (jobStatus && 'state' in jobStatus && jobStatus.state === 'completed') {
@@ -588,29 +633,63 @@ export default function HighPerformancePurchaseTicket({
           
           {/* Purchase Button */}
           {totalTickets > 0 && (
-            <div className="sticky bottom-0 pt-3 pb-1 bg-white">
-              <button
-                onClick={handlePurchase}
-                disabled={isLoading || totalTickets === 0}
-                className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <div className="flex items-center justify-center">
-                    <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
-                    Reserving tickets...
-                  </div>
-                ) : (
-                  <>
-                    {totalPrice > 0 ? (
-                      `GET TICKETS • ${formatCurrency(totalPrice)}`
+            <div className="sticky bottom-0 pt-3 pb-1 bg-white space-y-3">
+              {canReleaseTicket && reservationState === 'reserved' ? (
+                <div className="flex flex-col space-y-3">
+                  <button
+                    onClick={() => router.push(`/checkout/${eventId}?reservation=${reservationId}`)}
+                    className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200"
+                  >
+                    CONTINUE TO CHECKOUT
+                  </button>
+                  
+                  <button
+                    onClick={releaseReservation}
+                    disabled={isLoading}
+                    className="w-full py-3 px-4 border border-red-600 text-red-600 font-semibold rounded-lg hover:bg-red-50 transition-all duration-200 flex items-center justify-center"
+                  >
+                    {isLoading ? (
+                      <div className="flex items-center justify-center">
+                        <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
+                        Releasing tickets...
+                      </div>
                     ) : (
-                      'GET FREE TICKET'
+                      <>
+                        <XCircle className="w-5 h-5 mr-2" />
+                        RELEASE TICKETS
+                      </>
                     )}
-                  </>
-                )}
-              </button>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handlePurchase}
+                  disabled={isLoading || totalTickets === 0}
+                  className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? (
+                    <div className="flex items-center justify-center">
+                      <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
+                      Reserving tickets...
+                    </div>
+                  ) : (
+                    <>
+                      {totalPrice > 0 ? (
+                        `GET TICKETS • ${formatCurrency(totalPrice)}`
+                      ) : (
+                        'GET FREE TICKET'
+                      )}
+                    </>
+                  )}
+                </button>
+              )}
               
-              {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start text-left">
+                  <AlertCircle className="w-5 h-5 text-red-500 mr-2 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-800 text-sm">{error}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
