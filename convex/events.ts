@@ -405,22 +405,37 @@ export const purchaseTicket = mutation({
 export const getUserTickets = query({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    const tickets = await ctx.db
-      .query("tickets")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
+    try {
+      const tickets = await ctx.db
+        .query("tickets")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect();
 
-    const ticketsWithEvents = await Promise.all(
-      tickets.map(async (ticket) => {
-        const event = await ctx.db.get(ticket.eventId);
-        return {
-          ...ticket,
-          event,
-        };
-      })
-    );
+      // Process tickets with better error handling
+      const ticketsWithEvents = await Promise.all(
+        tickets.map(async (ticket) => {
+          try {
+            const event = await ctx.db.get(ticket.eventId);
+            return {
+              ...ticket,
+              event, // event might be null if deleted
+            };
+          } catch (error) {
+            console.error(`Error fetching event ${ticket.eventId} for ticket ${ticket._id}:`, error);
+            // Return ticket with null event if event fetch fails
+            return {
+              ...ticket,
+              event: null,
+            };
+          }
+        })
+      );
 
-    return ticketsWithEvents;
+      return ticketsWithEvents;
+    } catch (error) {
+      console.error("Error in getUserTickets:", error);
+      return []; // Return empty array on error to prevent hanging
+    }
   },
 });
 

@@ -86,8 +86,8 @@ export default function MyTicketsPage() {
     );
   }
 
-  const validTickets = tickets.filter((t) => t.status === "valid");
-  const otherTickets = tickets.filter((t) => t.status !== "valid");
+  const validTickets = tickets.filter((t) => t.status === "valid" && t.event !== null);
+  const otherTickets = tickets.filter((t) => t.status !== "valid" || t.event === null);
 
   const upcomingTickets = validTickets.filter(
     (t) => t.event && t.event.eventDate > Date.now()
@@ -123,7 +123,19 @@ export default function MyTicketsPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {upcomingTickets.map((ticket) => (
-                <TicketCard key={ticket._id} ticketId={ticket._id} />
+                <div key={ticket._id} className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
+                  <h3 className="font-semibold text-lg mb-2">{ticket.event?.name || 'Event'}</h3>
+                  <p className="text-gray-600 text-sm mb-2">
+                    {ticket.event?.eventDate ? new Date(ticket.event.eventDate).toLocaleDateString() : 'Date TBA'}
+                  </p>
+                  <p className="text-gray-600 text-sm mb-2">{ticket.event?.location || 'Location TBA'}</p>
+                  <p className="text-green-600 font-medium">Status: {ticket.status}</p>
+                  {ticket.purchasedAt && (
+                    <p className="text-gray-500 text-xs mt-2">
+                      Purchased: {new Date(ticket.purchasedAt).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -136,7 +148,19 @@ export default function MyTicketsPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {pastTickets.map((ticket) => (
-                <TicketCard key={ticket._id} ticketId={ticket._id} />
+                <div key={ticket._id} className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 opacity-75">
+                  <h3 className="font-semibold text-lg mb-2">{ticket.event?.name || 'Event'}</h3>
+                  <p className="text-gray-600 text-sm mb-2">
+                    {ticket.event?.eventDate ? new Date(ticket.event.eventDate).toLocaleDateString() : 'Date TBA'}
+                  </p>
+                  <p className="text-gray-600 text-sm mb-2">{ticket.event?.location || 'Location TBA'}</p>
+                  <p className="text-gray-600 font-medium">Status: {ticket.status} (Past Event)</p>
+                  {ticket.purchasedAt && (
+                    <p className="text-gray-500 text-xs mt-2">
+                      Purchased: {new Date(ticket.purchasedAt).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -149,7 +173,22 @@ export default function MyTicketsPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {otherTickets.map((ticket) => (
-                <TicketCard key={ticket._id} ticketId={ticket._id} />
+                <div key={ticket._id} className="bg-white rounded-lg shadow-sm border border-red-100 p-4">
+                  <h3 className="font-semibold text-lg mb-2">{ticket.event?.name || 'Event (Deleted)'}</h3>
+                  <p className="text-gray-600 text-sm mb-2">
+                    {ticket.event?.eventDate ? new Date(ticket.event.eventDate).toLocaleDateString() : 'Date TBA'}
+                  </p>
+                  <p className="text-gray-600 text-sm mb-2">{ticket.event?.location || 'Location TBA'}</p>
+                  <p className="text-red-600 font-medium">Status: {ticket.status}</p>
+                  {ticket.purchasedAt && (
+                    <p className="text-gray-500 text-xs mt-2">
+                      Purchased: {new Date(ticket.purchasedAt).toLocaleDateString()}
+                    </p>
+                  )}
+                  {!ticket.event && (
+                    <p className="text-red-500 text-xs mt-2">Event information not available</p>
+                  )}
+                </div>
               ))}
             </div>
           </div>
