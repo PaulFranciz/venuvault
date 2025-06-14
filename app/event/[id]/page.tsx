@@ -17,15 +17,15 @@ import { useToast } from "@/hooks/use-toast";
 import { useStorageUrl } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import JoinQueue from "@/components/JoinQueue";
-import TicketSelectionModal from "@/components/TicketSelectionModal";
+
 import TicketReservationBanner from "@/components/TicketReservationBanner";
 import Spinner from "@/components/Spinner";
 import ReleaseTicket from "@/components/ReleaseTicket";
-import TicketTypeSelector from "@/components/TicketTypeSelector";
 import useTicketStore from "@/store/ticketStore";
 import HighPerformancePurchaseTicket from "@/components/HighPerformancePurchaseTicket";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import ReservationBanner from "@/components/ReservationBanner";
 
 export default function EventPage() {
   const router = useRouter();
@@ -181,8 +181,8 @@ export default function EventPage() {
           description: "You have 10 minutes to complete your purchase."
         });
         
-        // Keep modal open to show reservation status and checkout options
-        // Don't automatically navigate away - let user control the flow
+        // Close the modal after successful reservation
+        closeModal();
       } else {
         console.error('Join queue button not found');
         toast({
@@ -370,8 +370,8 @@ export default function EventPage() {
             </div>
           </div>
 
-          {/* Right column for ticket purchasing on desktop */}
-          <div className="md:w-1/3 md:mt-0 mt-8">
+          {/* Right column for ticket purchasing on desktop ONLY */}
+          <div className="hidden md:block md:w-1/3 md:mt-0 mt-8">
             <div className="sticky top-4 bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
               <div className="p-6 border-b border-gray-100">
                 <h2 className="text-2xl font-bold text-[#502413] mb-1">Get Your Ticket</h2>
@@ -420,11 +420,19 @@ export default function EventPage() {
                   </div>
                 ) : (
                   <div>
-                    {/* High Performance Ticket Selection - Always used as primary method */}
-                    <HighPerformancePurchaseTicket 
-                      eventId={params.id as Id<"events">} 
-                      ticketTypeId={event?.ticketTypes && event.ticketTypes.length > 0 ? event.ticketTypes[0].id : undefined}
-                    />
+                    {/* Desktop: Show button to open modal */}
+                    <button
+                      onClick={openModal}
+                      className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200"
+                    >
+                      {/* Dynamic button text based on ticket types */}
+                      {event?.ticketTypes && event.ticketTypes.length > 1 
+                        ? "VIEW TICKETS" 
+                        : event?.isFreeEvent 
+                          ? "GET TICKET" 
+                          : "BUY NOW"
+                      }
+                    </button>
                   </div>
                 )}
               </div>
@@ -472,7 +480,7 @@ export default function EventPage() {
                 )}  
               </div>
             ) : (
-              // User needs to buy a ticket
+              // User needs to buy a ticket - open modal
               <button
                 onClick={() => {
                   // Check if user is signed in first
@@ -485,7 +493,7 @@ export default function EventPage() {
                     return;
                   }
 
-                  // Show the ticket selection modal using Zustand store
+                  // Open the modal
                   openModal();
                 }}
                 className="bg-[#F96521] hover:bg-[#e55511] text-white font-semibold py-3 px-8 rounded-lg transition-all duration-200"
@@ -533,19 +541,14 @@ export default function EventPage() {
         </div>
       )}
 
-      {isModalOpen && (
-        <TicketSelectionModal
-          isOpen={isModalOpen}
-          onClose={closeModal}
-          eventId={params.id as Id<"events">}
-          onPurchase={handlePurchase}
-          onJoinQueue={() => {
-            const joinQueueBtn = document.getElementById('join-queue-btn');
-            if (joinQueueBtn) joinQueueBtn.click();
-          }}
-          isDesktop={isDesktop}
-        />
-      )}
+      {/* High Performance Purchase Ticket Modal */}
+      <HighPerformancePurchaseTicket
+        eventId={params.id as Id<"events">}
+        ticketTypeId={event?.ticketTypes && event.ticketTypes.length > 0 ? event.ticketTypes[0].id : undefined}
+        isModalOpen={isModalOpen}
+        onClose={closeModal}
+        isDesktop={isDesktop}
+      />
     </div>
   );
 }

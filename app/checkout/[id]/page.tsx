@@ -81,10 +81,50 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [redirectPath, setRedirectPath] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [reservationId, setReservationId] = useState<string | null>(null);
+  
+  // Fetch reservation details if we have a reservation ID
+  const [reservationDetails, setReservationDetails] = useState<any>(null);
+  const [reservationLoading, setReservationLoading] = useState(false);
+  
+  useEffect(() => {
+    if (reservationId && !reservationDetails) {
+      setReservationLoading(true);
+      fetch(`/api/reservations/${reservationId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) {
+            console.error('Reservation error:', data.error);
+            toast.error("Reservation not found or expired");
+            setRedirectPath(`/event/${id}`);
+          } else {
+            setReservationDetails(data);
+            console.log('Reservation details loaded:', data);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to fetch reservation:', error);
+          toast.error("Failed to load reservation details");
+          setRedirectPath(`/event/${id}`);
+        })
+        .finally(() => {
+          setReservationLoading(false);
+        });
+    }
+  }, [reservationId, reservationDetails, id]);
   
   // Track hydration state - crucial for Next.js 15's partial hydration
   useEffect(() => {
     setIsHydrated(true);
+    
+    // Check for reservation parameter
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const reservation = searchParams.get("reservation");
+      if (reservation) {
+        setReservationId(reservation);
+      }
+    }
   }, []);
 
   // Setup empty arrays for multiple tickets
@@ -107,6 +147,14 @@ export default function CheckoutPage() {
       let ticketTypes = searchParams.getAll("ticketTypes[]");
       let quantities = searchParams.getAll("quantities[]");
       let hasValidParams = ticketTypes.length > 0 && quantities.length > 0;
+      
+      // Check for reservation parameter from high-performance checkout
+      const reservationId = searchParams.get("reservation");
+      if (reservationId && !hasValidParams) {
+        // This is a reservation-based checkout, we'll handle it differently
+        console.log('Found reservation ID in URL:', reservationId);
+        // We'll let the reservation logic handle this in the next useEffect
+      }
       
       // Check for sessionStorage backup if URL params are invalid
       if (!hasValidParams) {
@@ -234,14 +282,42 @@ export default function CheckoutPage() {
         );
         setRedirectPath(`/event/${id}`);
       }
-    } else if (!isUsingUrlParams && queuePosition === null) {
-      // No URL params and no queue record for this user/event (explicitly null, meaning query ran and found nothing)
+    } else if (!isUsingUrlParams && queuePosition === null && !reservationId) {
+      // No URL params, no queue record, and no reservation ID - user needs to select tickets
       toast.info("No active reservation found. Please select tickets from the event page.");
       setRedirectPath(`/event/${id}`);
+    } else if (reservationId && !isUsingUrlParams && reservationDetails) {
+      // Handle reservation-based checkout from high-performance system
+      console.log('Processing reservation-based checkout:', reservationId, reservationDetails);
+      
+      // Check if reservation is expired
+      if (reservationDetails.isExpired) {
+        toast.error("Your reservation has expired. Please select tickets again.");
+        setRedirectPath(`/event/${id}`);
+        return;
+      }
+      
+      // Create ticket selection based on reservation details
+      if (event.ticketTypes && selectedTickets.length === 0) {
+        const ticketType = event.ticketTypes.find(t => t.id === reservationDetails.ticketTypeId);
+        if (ticketType) {
+          setSelectedTickets([{
+            id: ticketType.id,
+            name: ticketType.name,
+            price: ticketType.price || 0,
+            quantity: reservationDetails.quantity || 1,
+          }]);
+          
+          toast.success("Reservation found! Complete your purchase below.");
+        } else {
+          toast.error("Invalid ticket type in reservation");
+          setRedirectPath(`/event/${id}`);
+        }
+      }
     }
     // Fallthrough: If isUsingUrlParams is true but ticketTypes is empty, or other edge cases,
     // no action is taken in this effect pass, potentially relying on user action or other effects.
-  }, [event, queuePosition, id, setRedirectPath, isHydrated, selectedTickets]);
+  }, [event, queuePosition, id, setRedirectPath, isHydrated, selectedTickets, reservationId, reservationDetails]);
 
   useEffect(() => {
     if (redirectPath) {
@@ -361,7 +437,7 @@ export default function CheckoutPage() {
     }
   };
 
-  if (!event || !isLoaded) {
+  if (!event || !isLoaded || (reservationId && reservationLoading)) {
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
         <Spinner />

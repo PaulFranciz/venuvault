@@ -16,6 +16,11 @@ export function createRedisClient() {
     return new Redis({
       url,
       token,
+      // Add production-ready configurations
+      retry: {
+        retries: 3,
+        backoff: (attempt) => Math.min(attempt * 100, 3000)
+      },
     });
   } else {
     // Use IORedis for server environments that support TCP
@@ -23,64 +28,120 @@ export function createRedisClient() {
     const redisUrl = process.env.REDIS_URL || "rediss://default:AS1gAAIjcDFiN2M5YjQ4MDY0MWM0NTRiOTE3M2U0NDJkNjYxODZiMXAxMA@tops-mudfish-11616.upstash.io:6379";
     
     const redisClient = new IORedis(redisUrl, {
-      tls: { rejectUnauthorized: false }, // Required for TLS connection
-      retryStrategy: (times) => Math.min(times * 50, 2000), // Exponential backoff
-      maxRetriesPerRequest: 3,
+      // Connection Settings
+      maxRetriesPerRequest: 2,
+      connectTimeout: 5000,
+      commandTimeout: 3000,
+      
+      // Retry Strategy
+      retryStrategy: (times) => {
+        if (times > 2) return null;
+        return Math.min(times * 100, 1000);
+      },
+      
+      // Use IPv4
+      family: 4,
+    });
+    
+    // Add connection event handlers for monitoring
+    redisClient.on('connect', () => {
+      console.log('✅ Redis connected successfully');
+    });
+    
+    redisClient.on('error', (err) => {
+      console.error('❌ Redis connection error:', err.message);
+    });
+    
+    redisClient.on('close', () => {
+      console.log('🔌 Redis connection closed');
     });
     
     // Create a wrapper that matches the @upstash/redis API for consistency
     return {
       get: async (key: string) => {
-        const result = await redisClient.get(key);
-        if (!result) return null;
-        
         try {
-          return JSON.parse(result);
-        } catch (err) {
-          console.error(`Failed to parse Redis value for key ${key}:`, err);
-          return result; // Return raw string if parsing fails
+          const result = await redisClient.get(key);
+          if (!result) return null;
+          
+          try {
+            return JSON.parse(result);
+          } catch (err) {
+            console.error(`Failed to parse Redis value for key ${key}:`, err);
+            return result; // Return raw string if parsing fails
+          }
+        } catch (error) {
+          console.error(`Redis GET error for key ${key}:`, error);
+          return null; // Return null on error to prevent crashes
         }
       },
       set: async (key: string, value: any, options?: { ex?: number }) => {
-        let serializedValue;
-        
         try {
-          // Handle non-serializable values (like [object Object] strings)
-          if (typeof value === 'string' && value === '[object Object]') {
-            console.warn(`Attempting to cache non-serializable string '[object Object]' for key ${key}`);
+          let serializedValue;
+          
+          try {
+            // Handle non-serializable values (like [object Object] strings)
+            if (typeof value === 'string' && value === '[object Object]') {
+              console.warn(`Attempting to cache non-serializable string '[object Object]' for key ${key}`);
+              serializedValue = JSON.stringify({});
+            } else {
+              serializedValue = JSON.stringify(value);
+            }
+          } catch (err) {
+            console.error(`Failed to serialize value for Redis key ${key}:`, err);
+            // Fallback to empty object rather than failing
             serializedValue = JSON.stringify({});
-          } else {
-            serializedValue = JSON.stringify(value);
           }
-        } catch (err) {
-          console.error(`Failed to serialize value for Redis key ${key}:`, err);
-          // Fallback to empty object rather than failing
-          serializedValue = JSON.stringify({});
+          
+          if (options?.ex) {
+            await redisClient.set(key, serializedValue, 'EX', options.ex);
+          } else {
+            await redisClient.set(key, serializedValue);
+          }
+          return 'OK';
+        } catch (error) {
+          console.error(`Redis SET error for key ${key}:`, error);
+          return 'ERROR'; // Return error status instead of throwing
         }
-        
-        if (options?.ex) {
-          await redisClient.set(key, serializedValue, 'EX', options.ex);
-        } else {
-          await redisClient.set(key, serializedValue);
-        }
-        return 'OK';
       },
       del: async (key: string) => {
-        await redisClient.del(key);
-        return 'OK';
+        try {
+          await redisClient.del(key);
+          return 'OK';
+        } catch (error) {
+          console.error(`Redis DEL error for key ${key}:`, error);
+          return 'ERROR';
+        }
       },
-      // Additional methods can be added as needed
+      // Add health check method
+      ping: async () => {
+        try {
+          await redisClient.ping();
+          return 'PONG';
+        } catch (error) {
+          console.error('Redis PING error:', error);
+          return 'ERROR';
+        }
+      },
+      // Graceful shutdown
+      disconnect: async () => {
+        try {
+          await redisClient.disconnect();
+        } catch (error) {
+          console.error('Redis disconnect error:', error);
+        }
+      }
     };
   }
 }
 
-// TTL (Time to Live) configurations for different data types
+// TTL (Time to Live) configurations for different data types - OPTIMIZED FOR PRODUCTION
 export const REDIS_TTL = {
-  EVENT: 60 * 15, // 15 minutes for event data
-  EVENT_LIST: 60 * 10, // 10 minutes for event listings
-  SEARCH: 60 * 5, // 5 minutes for search results
-  AVAILABILITY: 60, // 1 minute for availability data (needs to be fresh)
-  USER: 60 * 30, // 30 minutes for user data
+  EVENT: 60 * 30, // 30 minutes for event data (increased for better caching)
+  EVENT_LIST: 60 * 15, // 15 minutes for event listings (increased)
+  SEARCH: 60 * 10, // 10 minutes for search results (increased)
+  AVAILABILITY: 30, // 30 seconds for availability data (reduced for freshness)
+  USER: 60 * 60, // 1 hour for user data (increased)
+  QUEUE_POSITION: 60 * 10, // 10 minutes for queue positions
 };
 
 // Key generation helpers to ensure consistent key naming
@@ -90,4 +151,15 @@ export const redisKeys = {
   eventAvailability: (id: string) => `event:${id}:availability`,
   search: (query: string) => `search:${query.toLowerCase().trim()}`,
   user: (id: string) => `user:${id}`,
+  queuePosition: (eventId: string, userId: string) => `queue:${eventId}:${userId}`,
 };
+
+// Global Redis client instance (singleton pattern for better performance)
+let globalRedisClient: any = null;
+
+export function getRedisClient() {
+  if (!globalRedisClient) {
+    globalRedisClient = createRedisClient();
+  }
+  return globalRedisClient;
+}

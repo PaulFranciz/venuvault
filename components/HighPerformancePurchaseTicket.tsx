@@ -1,28 +1,39 @@
 "use client";
 
-import { Id } from "@/convex/_generated/dataModel";
-import { useEffect, useState } from "react";
-import { useUser } from "@clerk/nextjs";
-import { api } from "@/convex/_generated/api";
-import { useQuery } from "convex/react";
-import ReleaseTicket from "./ReleaseTicket";
-import { Ticket, LoaderCircle, Plus, Minus, Users, Clock, AlertCircle, XCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import { Button } from "./ui/button";
+import { LoaderCircle, CheckCircle, AlertCircle, Clock, XCircle, ArrowLeft, X, Users, Minus, Plus, Loader2 } from "lucide-react";
 import { useQueueSystem } from "@/hooks/queries/useQueueSystem";
-import { useEvent, useEventAvailability } from "@/hooks/queries/useEventQueries";
-import { useCircuitBreaker } from "@/hooks/useCircuitBreaker";
+import { useUser, SignInButton } from "@clerk/nextjs";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { useCircuitBreaker } from "@/hooks/useCircuitBreaker";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
+import { useEvent, useEventAvailability } from "@/hooks/queries/useEventQueries";
 import { formatCurrency } from "@/lib/formatting";
+import { useStorageUrl } from "@/lib/utils";
+import { format } from "date-fns";
 
 type ReservationState = 'idle' | 'processing' | 'reserved' | 'error';
 
+interface HighPerformancePurchaseTicketProps {
+  eventId: Id<"events">;
+  ticketTypeId?: string;
+  isModalOpen: boolean;
+  onClose: () => void;
+  isDesktop?: boolean;
+}
+
 export default function HighPerformancePurchaseTicket({ 
   eventId,
-  ticketTypeId
-}: { 
-  eventId: Id<"events">,
-  ticketTypeId?: string
-}) {
+  ticketTypeId,
+  isModalOpen,
+  onClose,
+  isDesktop = false
+}: HighPerformancePurchaseTicketProps) {
   const { user } = useUser();
   const router = useRouter();
   
@@ -31,17 +42,18 @@ export default function HighPerformancePurchaseTicket({
     staleTime: 1000 * 60 * 5, // 5-minute cache for event details
   });
   
-  // Using enhanced caching for availability data
-  const { data: availability, isLoading: availabilityLoading } = useEventAvailability(eventId);
+  // Skip availability loading for faster checkout - we'll check availability during reservation
+  const availability = null;
+  const availabilityLoading = false;
 
   // Use Redis + BullMQ ticket reservation system
   const { reserveTicket, useJobStatus } = useQueueSystem();
   
   // Circuit breaker for resilience
   const { execute, status: circuitStatus } = useCircuitBreaker({
-    timeout: 5000, // 5 seconds timeout
-    resetTimeout: 10000, // 10 seconds before trying again after failure
-    maxFailures: 3, // Allow 3 failures before opening circuit
+    timeout: 10000, // 10 seconds timeout (increased from 5s)
+    resetTimeout: 15000, // 15 seconds before trying again after failure
+    maxFailures: 2, // Allow 2 failures before opening circuit (reduced for faster failover)
   });
 
   // Use existing Convex query for queue position
@@ -57,16 +69,17 @@ export default function HighPerformancePurchaseTicket({
   const [reservationState, setReservationState] = useState<ReservationState>('idle');
   const [canReleaseTicket, setCanReleaseTicket] = useState(false);
   
-  // Multiple ticket selection state
+  // Multiple ticket selection state - like the modal
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  // Always show ticket selector by default
-  const [showTicketSelector, setShowTicketSelector] = useState(true);
 
   // Check job status if we have a reservation ID
   const { data: jobStatus, isLoading: jobStatusLoading } = useJobStatus(
     reservationId || undefined,
     reservationId ? 'ticketReservation' : undefined
   );
+
+  // Get event image
+  const imageUrl = useStorageUrl(event?.thumbnailImageStorageId || event?.imageStorageId);
 
   // If we don't have a queue position yet, set a future expiration time (10 minutes from now)
   // This prevents "This offer has expired" message when first accessing the page
@@ -102,16 +115,16 @@ export default function HighPerformancePurchaseTicket({
   
   // Initialize quantities with the specified ticketTypeId if provided
   useEffect(() => {
-    if (ticketTypeId && event?.ticketTypes && !showTicketSelector) {
+    if (ticketTypeId && event?.ticketTypes) {
       const ticketType = event.ticketTypes.find(type => type.id === ticketTypeId);
       if (ticketType && !quantities[ticketTypeId]) {
         setQuantities({ [ticketTypeId]: 1 });
       }
     }
-  }, [ticketTypeId, event?.ticketTypes, quantities, showTicketSelector]);
+  }, [ticketTypeId, event?.ticketTypes, quantities]);
 
   // Calculate time remaining in minutes and seconds
-  const calculateTimeRemaining = () => {
+  const calculateTimeRemaining = useCallback(() => {
     if (!queuePosition?.offerExpiresAt) {
       setTimeRemaining("");
       return;
@@ -129,40 +142,29 @@ export default function HighPerformancePurchaseTicket({
     const minutes = Math.floor(diff / 60000);
     const seconds = Math.floor((diff % 60000) / 1000);
     setTimeRemaining(`${minutes}:${seconds.toString().padStart(2, '0')}`);
-  };
+  }, [queuePosition?.offerExpiresAt]);
 
   useEffect(() => {
     calculateTimeRemaining();
     const interval = setInterval(calculateTimeRemaining, 1000);
     return () => clearInterval(interval);
-  }, [queuePosition]);
+  }, [queuePosition, calculateTimeRemaining]);
   
-  // Release a reserved ticket
+  // Release reservation function
   const releaseReservation = async () => {
-    if (!reservationId) return;
-    
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      // Call the release endpoint
-      const response = await fetch(`/api/queue/release-ticket?id=${reservationId}`, {
-        method: 'POST',
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to release ticket');
-      }
-      
-      // Reset state
+      // Reset all local state
+      setQuantities({});
       setReservationId(null);
       setReservationState('idle');
       setCanReleaseTicket(false);
       setError(null);
       
-      // Show success message
-      toast.success('Your ticket has been released and is available for others');
+      toast.success("Tickets released successfully");
+      onClose(); // Close the modal
     } catch (error) {
-      console.error('Error releasing ticket:', error);
-      toast.error('Unable to release your ticket. Please try again.');
+      toast.error("Failed to release tickets");
     } finally {
       setIsLoading(false);
     }
@@ -209,6 +211,9 @@ export default function HighPerformancePurchaseTicket({
     setError(null);
     setReservationState('processing');
     
+    // Show loading toast
+    toast.loading("Reserving your tickets...", { id: 'reservation-toast', duration: 30000 });
+    
     try {
       // Get all selected ticket types with quantities
       const selectedTickets = Object.entries(quantities)
@@ -228,11 +233,7 @@ export default function HighPerformancePurchaseTicket({
       };
 
       // Execute the reservation with circuit breaker pattern
-      const reservationResult = await execute(async () => {
-        if (selectedTickets.length === 0) {
-          return { success: false, error: "No tickets selected" };
-        }
-        
+      const reservationResult = await execute(async () => {        
         // Use mutateAsync instead of direct function call
         const result = await reserveTicket.mutateAsync({
           eventId: eventId as string,
@@ -249,7 +250,10 @@ export default function HighPerformancePurchaseTicket({
         setReservationId(reservationResult.jobId);
         setReservationState('reserved');
         setCanReleaseTicket(true); // Enable release button
-        toast.success("Tickets reserved! Complete your purchase now.");
+        
+        // Dismiss loading toast and show success
+        toast.dismiss('reservation-toast');
+        toast.success("Tickets reserved! Redirecting to checkout...");
         
         // Redirect to checkout with the reservation ID
         router.push(`/checkout/${eventId}?reservation=${reservationResult.jobId}`);
@@ -296,6 +300,7 @@ export default function HighPerformancePurchaseTicket({
       
       setError(errorMessage);
       setReservationState('error');
+      toast.dismiss('reservation-toast');
       toast.error(errorMessage);
     } finally {
       setIsLoading(false);
@@ -319,297 +324,257 @@ export default function HighPerformancePurchaseTicket({
     }
   }, [jobStatus, jobStatusLoading, router, eventId]);
 
+  // If modal is not open, don't render anything
+  if (!isModalOpen) {
+    return null;
+  }
+
   // Loading state
   if (eventLoading || availabilityLoading) {
     return (
-      <div className="bg-white p-6 rounded-xl shadow-lg border border-amber-200 flex justify-center items-center">
-        <LoaderCircle className="w-8 h-8 animate-spin text-amber-500" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden">
+        <motion.div 
+          className="absolute inset-0 bg-black bg-opacity-70"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        />
+        <motion.div 
+          className="bg-white p-6 rounded-xl shadow-lg border border-amber-200 flex justify-center items-center z-10"
+          initial={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+          animate={isDesktop ? { x: 0, opacity: 1 } : { y: 0 }}
+          exit={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+          transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        >
+          <LoaderCircle className="w-8 h-8 animate-spin text-amber-500" />
+        </motion.div>
       </div>
     );
   }
 
-  // If the user already has a queue position, show the original ticket reservation UI
-  // If there's a queue position that's not expired, show reservation status with smart UI
-  if (queuePosition && !isExpired) {
-    // Calculate percentage of time remaining for progress bar
-    const startTime = queuePosition._creationTime || (Date.now() - 10000); // fallback if missing
-    const expiryTime = queuePosition.offerExpiresAt || (startTime + 8 * 60 * 1000); // 8 minutes in ms
-    const totalDuration = expiryTime - startTime;
-    const elapsed = Date.now() - startTime;
-    const percentage = Math.max(0, Math.min(100, 100 - (elapsed / totalDuration) * 100));
-    
-    // Determine urgency level for UI
-    let urgencyColor = "#4ade80"; // green by default
-    let urgencyText = "Plenty of time";
-    
-    if (percentage < 30) {
-      urgencyColor = "#ef4444"; // red for urgent
-      urgencyText = "Almost expired!";
-    } else if (percentage < 60) {
-      urgencyColor = "#f97316"; // orange for warning
-      urgencyText = "Time running out";
-    }
-    
+  // If queue position is offered, show the reservation status
+  if (queuePosition && queuePosition.status === 'offered') {
+    const isExpired = queuePosition.offerExpiresAt ? Date.now() > queuePosition.offerExpiresAt : false;
+    const ticketType = event?.ticketTypes?.find(t => t.id === queuePosition.ticketTypeId);
+    const ticketName = ticketType?.name || 'Ticket';
+    const totalPrice = (ticketType?.price || 0) * (queuePosition.quantity || 1);
+
     return (
-      <div className="p-6 rounded-lg border border-[#F96521]/20 bg-white shadow-md">
-        <div className="space-y-4">
-          {/* Header with icon and title */}
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-full bg-[#F96521]/10 flex items-center justify-center">
-              <Ticket className="w-5 h-5 text-[#F96521]" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden">
+        <motion.div 
+          className="absolute inset-0 bg-black bg-opacity-70"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        />
+        <motion.div 
+          className={`${
+            isDesktop 
+              ? "max-w-md md:max-w-lg h-auto max-h-[90vh] rounded-xl overflow-hidden" 
+              : "w-full max-w-md rounded-t-xl overflow-hidden"
+          } bg-white text-[#333333] z-10 flex flex-col`}
+          initial={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+          animate={isDesktop ? { x: 0, opacity: 1 } : { y: 0 }}
+          exit={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+          transition={{ type: "spring", damping: 25, stiffness: 300 }}
+          style={isDesktop ? { position: 'absolute', right: '2rem', top: '4rem' } : {}}
+        >
+          <div className="p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-[#502413]">
+                {isExpired ? 'Offer Expired' : 'Tickets Reserved'}
+              </h2>
+              <button onClick={onClose} className="p-1 rounded-full bg-gray-100 h-8 w-8 flex items-center justify-center">
+                <X className="w-4 h-4 text-[#502413]" />
+              </button>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold text-[#502413]">Tickets Reserved!</h3>
-              <div className="flex items-center">
-                <span className="text-sm font-medium" style={{ color: urgencyColor }}>{urgencyText}</span>
+            
+            {isExpired ? (
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+                  <XCircle className="w-8 h-8 text-red-500" />
+                </div>
+                <p className="text-gray-600">Your ticket offer has expired. Please try again.</p>
+                <button
+                  onClick={onClose}
+                  className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200"
+                >
+                  Close
+                </button>
               </div>
-            </div>
-          </div>
-          
-          {/* Countdown timer with progress bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Reserved for</span>
-              <div className="flex items-center">
-                <Clock className="w-4 h-4 text-[#F96521] mr-1" />
-                <span className="text-sm font-semibold text-[#F96521]">{timeRemaining}</span>
-              </div>
-            </div>
-            <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
-              <div 
-                className="h-full transition-all duration-1000 ease-linear rounded-full" 
-                style={{ 
-                  width: `${percentage}%`,
-                  backgroundColor: urgencyColor 
-                }}
-              ></div>
-            </div>
-            <p className="text-sm text-gray-600">
-              Complete your purchase before timer expires to secure your spot!
-            </p>
-          </div>
-          
-          {/* Ticket summary */}
-          <div className="bg-gray-50 p-4 rounded-lg space-y-2">
-            <h4 className="font-medium text-[#502413]">Reserved Tickets</h4>
-            <div className="flex justify-between text-sm">
-              <span>{queuePosition.quantity || 1}x {ticketName}</span>
-              <span className="font-medium">{formatCurrency(totalPrice)}</span>
-            </div>
-          </div>
-          
-          {/* Action buttons */}
-          <div className="flex justify-between gap-3">
-            <button
-              onClick={() => {
-                // Release the reserved ticket
-                if (queuePosition._id) {
-                  const releaseBtn = document.getElementById('release-ticket-btn');
-                  if (releaseBtn) releaseBtn.click();
-                }
-              }}
-              className="w-full px-4 py-3 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-            >
-              Release Tickets
-            </button>
-            <button
-              onClick={() => {
-                // Redirect to checkout
-                const ticketType = queuePosition.ticketTypeId || "";
-                const qty = queuePosition.quantity || 1;
-                router.push(`/checkout/${eventId}?ticketTypes[]=${encodeURIComponent(ticketType)}&quantities[]=${encodeURIComponent(qty)}`);
-              }}
-              className="w-full px-4 py-3 bg-[#F96521] hover:bg-[#e55511] text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Complete Purchase
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Show the ticket selector UI
-  return (
-    <div className="rounded-lg overflow-hidden">
-      {reservationState === 'processing' && (
-        <div className="mb-4 p-4 bg-[#F96521]/10 rounded-lg border border-[#F96521]/20">
-          <div className="flex items-center">
-            <Clock className="w-5 h-5 text-[#F96521] animate-pulse mr-2" />
-            <div>
-              <h3 className="font-medium text-[#502413]">Reserving Your Tickets</h3>
-              <p className="text-sm text-gray-600">Please wait while we secure your tickets for 8 minutes...</p>
-            </div>
-          </div>
-          <div className="mt-3 w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <div className="h-full bg-[#F96521] rounded-full animate-pulse" style={{ width: '100%' }}></div>
-          </div>
-        </div>
-      )}
-      
-      {/* Always display all ticket types */}
-      {event?.ticketTypes && event.ticketTypes.length > 0 ? (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-[#502413] mb-4">AVAILABLE TICKETS</h3>
-          {/* Ticket Type Selection */}
-          <div className="space-y-4 mb-4">
-            {event?.ticketTypes?.map(ticketType => {
-              const isSelected = (quantities[ticketType.id] || 0) > 0;
-              const isSoldOut = ticketType.quantity !== undefined && ticketType.quantity <= 0;
-              const hasEnded = ticketType.isHidden || isSoldOut; // Check if ticket sales have ended
-              
-              return (
-                <div key={ticketType.id} className="flex flex-col">
-                  {/* Ticket row - similar to the image layout */}
-                  <div className="flex items-center justify-between mb-1">
-                    {/* Left side - vertical gray bar and ticket info */}
-                    <div className="flex items-start">
-                      <div className="w-2 h-16 bg-gray-300 rounded-full mr-4 self-stretch"></div>
-                      <div className="py-1">
-                        <h3 className="font-medium text-[#502413]">{ticketType.name}</h3>
-                        <p className="text-2xl font-bold text-[#502413]">
-                          {ticketType.price > 0 ? formatCurrency(ticketType.price) : (
-                            <span className="text-green-500">FREE</span>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                    
-                    {/* Right side - quantity controls or sold out indicator */}
-                    <div className="flex items-center">
-                      {hasEnded ? (
-                        <div className="px-3 py-1 bg-red-100 text-red-600 text-xs font-bold rounded-full">
-                          Ticket sales ended
-                        </div>
-                      ) : (
-                        <div className="flex items-center">
-                          {/* Minus button */}
-                          <button 
-                            onClick={() => decrementQuantity(ticketType.id)}
-                            className="h-8 w-8 rounded-full border border-gray-300 flex items-center justify-center"
-                            aria-label="Decrease quantity"
-                          >
-                            <Minus className="w-4 h-4 text-gray-500" />
-                          </button>
-                          
-                          {/* Quantity display */}
-                          <span className="text-lg font-bold text-[#502413] mx-4">
-                            {quantities[ticketType.id] || 0}
-                          </span>
-                          
-                          {/* Plus button */}
-                          <button 
-                            onClick={() => incrementQuantity(ticketType.id)}
-                            className="h-8 w-8 rounded-full border border-gray-300 flex items-center justify-center bg-white hover:bg-[#F96521] hover:border-[#F96521] hover:text-white transition-colors"
-                            aria-label="Increase quantity"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Learn more link */}
-                  <div className="flex justify-end">
-                    <button className="text-sm text-[#F96521] hover:underline px-2 py-1">
-                      Learn more
-                    </button>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mx-auto">
+                  <CheckCircle className="w-8 h-8 text-green-500" />
+                </div>
+                
+                <div className="text-center">
+                  <p className="text-gray-600 mb-2">
+                    You have {Math.max(0, Math.floor(((queuePosition.offerExpiresAt || 0) - Date.now()) / 60000))} minutes remaining
+                  </p>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-[#F96521] h-2 rounded-full transition-all duration-1000"
+                      style={{ 
+                        width: `${Math.max(0, Math.min(100, ((queuePosition.offerExpiresAt || 0) - Date.now()) / (8 * 60 * 1000) * 100))}%` 
+                      }}
+                    ></div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          
-          {/* Purchase Button */}
-          {totalTickets > 0 && (
-            <div className="sticky bottom-0 pt-3 pb-1 bg-white border-t border-gray-100 mt-4">
-              <button
-                onClick={handlePurchase}
-                disabled={isLoading || totalTickets === 0 || reservationState === 'processing'}
-                className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                {reservationState === 'processing' ? (
-                  <div className="flex items-center justify-center">
-                    <Clock className="animate-spin w-5 h-5 mr-2" />
-                    Reserving tickets for 8 minutes...
+                
+                {/* Ticket summary */}
+                <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                  <h4 className="font-medium text-[#502413]">Reserved Tickets</h4>
+                  <div className="flex justify-between text-sm">
+                    <span>{queuePosition.quantity || 1}x {ticketName}</span>
+                    <span className="font-medium">{formatCurrency(totalPrice)}</span>
                   </div>
-                ) : isLoading ? (
-                  <div className="flex items-center justify-center">
-                    <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
-                    Processing...
-                  </div>
-                ) : (
-                  <>
-                    Reserve & Checkout
-                  </>
-                )}
-              </button>
-              
-              {/* Reservation information tooltip */}
-              <div className="mt-3 bg-blue-50 p-3 rounded-lg flex items-start">
-                <AlertCircle className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-700">
-                  When you reserve tickets, they&apos;ll be held for you for 8 minutes while you complete your purchase. This ensures no one else can buy them during this time.
-                </p>
+                </div>
+                
+                {/* Action buttons */}
+                <div className="flex justify-between gap-3">
+                  <button
+                    onClick={() => {
+                      // Release the reserved ticket
+                      if (queuePosition._id) {
+                        const releaseBtn = document.getElementById('release-ticket-btn');
+                        if (releaseBtn) releaseBtn.click();
+                      }
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+                  >
+                    Release Tickets
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Redirect to checkout
+                      const ticketType = queuePosition.ticketTypeId || "";
+                      const qty = queuePosition.quantity || 1;
+                      router.push(`/checkout/${eventId}?ticketTypes[]=${encodeURIComponent(ticketType)}&quantities[]=${encodeURIComponent(qty)}`);
+                    }}
+                    className="w-full px-4 py-3 bg-[#F96521] hover:bg-[#e55511] text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Complete Purchase
+                  </button>
+                </div>
               </div>
-              
-              {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
-            </div>
-          )}
+            )}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Main modal content with ticket selection
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden">
+      {/* Overlay */}
+      <motion.div 
+        className="absolute inset-0 bg-black bg-opacity-70"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+      />
+      
+      {/* Modal Content */}
+      <motion.div 
+        className={`${
+          isDesktop 
+            ? "max-w-md md:max-w-lg h-auto max-h-[90vh] rounded-xl overflow-hidden" 
+            : "w-full max-w-md rounded-t-xl overflow-hidden"
+        } bg-white text-[#333333] z-10 flex flex-col`}
+        initial={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+        animate={isDesktop ? { x: 0, opacity: 1 } : { y: 0 }}
+        exit={isDesktop ? { x: "100%", opacity: 0 } : { y: "100%" }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        style={isDesktop ? { position: 'absolute', right: '2rem', top: '4rem' } : {}}
+      >
+        {/* Header with Navigation */}
+        <div className="p-4 flex items-center justify-between border-b border-gray-200">
+          <div className="flex items-center">
+            <button onClick={onClose} className="mr-4">
+              <ArrowLeft className="w-5 h-5 text-[#502413]" />
+            </button>
+            <span className="text-sm text-gray-600">Ticket → Payment → Get the app</span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-full bg-gray-100 h-8 w-8 flex items-center justify-center">
+            <X className="w-4 h-4 text-[#502413]" />
+          </button>
         </div>
-      ) : event?.ticketTypes && event.ticketTypes.length === 1 ? (
-        // For single ticket type, show it with the same UI as multiple tickets
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-[#502413] mb-2">AVAILABLE TICKETS</h3>
-          <div className="space-y-3 mb-4">
-            {event.ticketTypes.map(ticketType => {
-              const isSelected = (quantities[ticketType.id] || 0) > 0;
-              const isSoldOut = ticketType.quantity !== undefined && ticketType.quantity <= 0;
-              const ticketReleaseText = ticketType.description || 
-                (ticketType.name.includes("General") ? "(Final release)" : "(Second release)");
-              
-              return (
-                <div 
-                  key={ticketType.id} 
-                  className={`p-4 rounded-lg border ${isSelected ? 'border-[#F96521] bg-[#fcf9f4]' : 'border-gray-200 bg-white'} ${isSoldOut ? 'opacity-50' : ''}`}
-                >
-                  <div className="flex items-start mb-1">
-                    <Users className={`w-5 h-5 mr-2 ${isSelected ? 'text-[#F96521]' : 'text-gray-400'}`} />
-                    <div className="flex flex-col w-full">
-                      <div className="flex justify-between w-full">
-                        <div>
-                          <h3 className={`font-bold ${isSelected ? 'text-[#502413]' : 'text-gray-700'}`}>
-                            {ticketType.name} <span className="text-gray-500 text-sm font-normal">{ticketReleaseText}</span>
-                          </h3>
-                          <p className={`${isSelected ? 'text-[#F96521]' : 'text-gray-700'} font-bold`}>
-                            {ticketType.price > 0 ? formatCurrency(ticketType.price) : (
-                              <span className="text-green-500 font-bold">FREE</span>
-                            )}
-                          </p>
+        
+        {/* Event Info */}
+        <div className="p-4 border-b border-gray-200 bg-[#fcf9f4]">
+          <h2 className="font-bold text-xl mb-1 text-[#502413]">{event?.name}</h2>
+          <div className="text-[#F96521] text-sm mb-1">
+            {event && event.eventDate ? format(new Date(event.eventDate), "EEE, d MMMM, h:mm a") : "TBA"}
+          </div>
+          <div className="text-gray-600 text-sm">{event?.location}</div>
+        </div>
+
+        {/* Processing state */}
+        {reservationState === 'processing' && (
+          <div className="p-4 bg-[#F96521]/10 border-l-4 border-[#F96521] m-4 rounded-lg">
+            <div className="flex items-center">
+              <Clock className="w-5 h-5 text-[#F96521] animate-pulse mr-2" />
+              <div>
+                <h3 className="font-medium text-[#502413]">Reserving Your Tickets</h3>
+                <p className="text-sm text-gray-600">Please wait while we secure your tickets for 8 minutes...</p>
+              </div>
+            </div>
+            <div className="mt-3 w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-[#F96521] rounded-full animate-pulse" style={{ width: '100%' }}></div>
+            </div>
+          </div>
+        )}
+        
+        {/* Ticket Selection */}
+        <div className="flex-1 overflow-y-auto bg-white">
+          {event?.ticketTypes && event.ticketTypes.length > 0 ? (
+            <div className="px-4 py-4 space-y-3">
+              {event.ticketTypes.map((ticketType) => {
+                const isSelected = quantities[ticketType.id] > 0;
+                const ticketReleaseText = ticketType.description || 
+                  (ticketType.name.includes("General") ? "(Final release)" : "(Second release)");
+                
+                return (
+                  <div 
+                    key={ticketType.id} 
+                    className={`p-4 rounded-lg border ${isSelected ? 'border-[#F96521] bg-[#fcf9f4]' : 'border-gray-200 bg-white'}`}
+                  >
+                    <div className="flex items-start mb-1">
+                      <Users className={`w-5 h-5 mr-2 ${isSelected ? 'text-[#F96521]' : 'text-gray-400'}`} />
+                      <div className="flex flex-col w-full">
+                        <div className="flex justify-between w-full">
+                          <div>
+                            <h3 className={`font-bold ${isSelected ? 'text-[#502413]' : 'text-[#333333]'}`}>
+                              {ticketType.name} <span className="text-gray-500 text-sm font-normal">{ticketReleaseText}</span>
+                            </h3>
+                            <p className={`${isSelected ? 'text-[#F96521]' : 'text-gray-700'} font-bold`}>
+                              {ticketType.price > 0 ? formatCurrency(ticketType.price) : (
+                                <span className="text-green-500 font-bold">FREE</span>
+                              )}
+                            </p>
+                          </div>
                           
-                          {isSoldOut && (
-                            <p className="text-red-500 text-sm font-medium mt-1">Sold Out</p>
-                          )}
-                        </div>
-                        
-                        {!isSoldOut && (
-                          isSelected ? (
+                          {isSelected ? (
                             <div className="flex items-center gap-4 ml-auto">
                               <button 
                                 onClick={() => decrementQuantity(ticketType.id)}
-                                className="h-8 w-8 flex items-center justify-center text-gray-700 hover:text-[#F96521]"
+                                className="h-8 w-8 flex items-center justify-center"
                               >
                                 <Minus className="w-5 h-5" />
                               </button>
                               
-                              <span className="text-lg font-bold text-[#502413]">
-                                {quantities[ticketType.id] || 0}
+                              <span className="text-lg font-bold text-black">
+                                {quantities[ticketType.id]}
                               </span>
                               
                               <button 
                                 onClick={() => incrementQuantity(ticketType.id)}
-                                className="h-8 w-8 flex items-center justify-center text-gray-700 hover:text-[#F96521]"
+                                className="h-8 w-8 flex items-center justify-center"
                               >
                                 <Plus className="w-5 h-5" />
                               </button>
@@ -617,88 +582,140 @@ export default function HighPerformancePurchaseTicket({
                           ) : (
                             <button 
                               onClick={() => incrementQuantity(ticketType.id)}
-                              className="h-10 w-10 rounded-full border border-gray-300 hover:border-[#F96521] flex items-center justify-center ml-auto"
+                              className="h-10 w-10 rounded-full border border-gray-700 flex items-center justify-center ml-auto"
                             >
-                              <Plus className="w-5 h-5 text-gray-700 hover:text-[#F96521]" />
+                              <Plus className="w-5 h-5 text-white" />
                             </button>
-                          )
-                        )}
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-          
-          {/* Purchase Button */}
-          {totalTickets > 0 && (
-            <div className="sticky bottom-0 pt-3 pb-1 bg-white space-y-3">
-              {canReleaseTicket && reservationState === 'reserved' ? (
-                <div className="flex flex-col space-y-3">
-                  <button
-                    onClick={() => router.push(`/checkout/${eventId}?reservation=${reservationId}`)}
-                    className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200"
-                  >
-                    CONTINUE TO CHECKOUT
-                  </button>
-                  
-                  <button
-                    onClick={releaseReservation}
-                    disabled={isLoading}
-                    className="w-full py-3 px-4 border border-red-600 text-red-600 font-semibold rounded-lg hover:bg-red-50 transition-all duration-200 flex items-center justify-center"
-                  >
-                    {isLoading ? (
-                      <div className="flex items-center justify-center">
-                        <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
-                        Releasing tickets...
-                      </div>
-                    ) : (
-                      <>
-                        <XCircle className="w-5 h-5 mr-2" />
-                        RELEASE TICKETS
-                      </>
-                    )}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={handlePurchase}
-                  disabled={isLoading || totalTickets === 0}
-                  className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? (
-                    <div className="flex items-center justify-center">
-                      <LoaderCircle className="animate-spin w-5 h-5 mr-2" />
-                      Reserving tickets...
-                    </div>
-                  ) : (
-                    <>
-                      {totalPrice > 0 ? (
-                        `GET TICKETS • ${formatCurrency(totalPrice)}`
-                      ) : (
-                        'GET FREE TICKET'
-                      )}
-                    </>
-                  )}
-                </button>
-              )}
+                );
+              })}
               
-              {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start text-left">
-                  <AlertCircle className="w-5 h-5 text-red-500 mr-2 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-800 text-sm">{error}</p>
+              {/* Terms and Conditions */}
+              <div className="mt-6 text-xs text-gray-500 flex items-start gap-3">
+                <div className="flex-shrink-0 mt-1">
+                  <div className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" stroke="white" strokeWidth="2" />
+                    </svg>
+                  </div>
                 </div>
-              )}
+                <p className="text-gray-400">
+                  By purchasing you&apos;ll receive an account, and agree to our general Terms of Use, Privacy Policy and the Ticket Purchase Terms. We process your personal data in accordance with our Privacy Policy.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="py-8 text-center text-gray-500">
+              No ticket types available for this event
             </div>
           )}
         </div>
-      ) : (
-        // Fallback for when no ticket types are available
-        <div className="p-4 text-center bg-gray-50 rounded-lg">
-          <p className="text-gray-500">No tickets available for this event</p>
+        
+        {/* Checkout Button or Status */}
+        <div className="p-4 space-y-3">
+          {/* Show error message if user needs to sign in */}
+          {error && error.includes("sign in") && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-center mb-3">
+                <AlertCircle className="w-5 h-5 text-red-500 mr-2" />
+                <p className="text-red-700 font-medium">Sign in required</p>
+              </div>
+              <p className="text-red-600 text-sm mb-4">Please sign in to complete your ticket purchase and secure your spot.</p>
+              <SignInButton mode="modal">
+                <button className="w-full py-3 rounded-lg text-center font-bold bg-[#F96521] hover:bg-[#e55511] text-white transition-colors">
+                  Sign In to Continue
+                </button>
+              </SignInButton>
+            </div>
+          )}
+          
+          {totalTickets > 0 ? (
+            <>
+              <div className="w-full p-4 rounded-lg text-center font-bold text-lg bg-green-500 text-black">
+                <div className="text-center mb-2">TICKETS SELECTED</div>
+                <div className="text-sm font-normal space-y-1">
+                  {Object.entries(quantities).map(([typeId, qty]) => {
+                    const ticket = event?.ticketTypes?.find((t) => t.id === typeId);
+                    return (
+                      <div key={typeId} className="flex justify-between">
+                        <span>{qty}x {ticket?.name || 'Ticket'}</span>
+                        <span>
+                          {ticket && ticket.price !== undefined && ticket.price > 0 
+                            ? formatCurrency(ticket.price * qty)
+                            : <span className="text-green-500 font-bold">FREE</span>
+                          }
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-black/20 flex justify-between">
+                  <span>Total</span>
+                  <span>{totalPrice > 0 ? formatCurrency(totalPrice) : <span className="text-green-500 font-bold">FREE</span>}</span>
+                </div>
+              </div>
+              
+              {!user ? (
+                <SignInButton mode="modal">
+                  <button className="w-full py-4 rounded-lg text-center font-bold bg-[#F96521] hover:bg-[#e55511] text-white transition-colors">
+                    {totalPrice > 0 ? (
+                      <>Sign In to Purchase &middot; {formatCurrency(totalPrice)}</>
+                    ) : (
+                      <>Sign In to Get Ticket</>
+                    )}
+                  </button>
+                </SignInButton>
+              ) : (
+                <div className="flex gap-3">
+                  <button 
+                    onClick={releaseReservation}
+                    disabled={isLoading}
+                    className="flex-1 py-3 rounded-full text-center font-bold border border-gray-600 text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    {isLoading ? (
+                      <div className="flex items-center justify-center">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        RELEASING...
+                      </div>
+                    ) : (
+                      "RELEASE TICKET"
+                    )}
+                  </button>
+                  <button 
+                    onClick={handlePurchase}
+                    disabled={isLoading || reservationState === 'processing'}
+                    className="flex-1 py-4 rounded-lg text-center font-bold bg-[#F96521] hover:bg-[#e55511] text-white transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {reservationState === 'processing' ? (
+                      <div className="flex items-center justify-center">
+                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        PROCESSING...
+                      </div>
+                    ) : isLoading ? (
+                      <div className="flex items-center justify-center">
+                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        PROCESSING...
+                      </div>
+                    ) : totalPrice > 0 ? (
+                      <>PROCEED TO CHECKOUT &middot; {formatCurrency(totalPrice)}</>
+                    ) : (
+                      <>GET TICKET</>
+                    )}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-center text-gray-400 text-sm">
+              Tap the + button to select a ticket and join the queue immediately
+            </div>
+          )}
         </div>
-      )}
+      </motion.div>
     </div>
   );
 }
