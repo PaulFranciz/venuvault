@@ -5,15 +5,30 @@ import { useQuery } from "convex/react";
 import { useUser } from "@clerk/nextjs";
 import TicketCard from "@/components/TicketCard";
 import { Ticket } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function MyTicketsPage() {
   const { user } = useUser();
-  const tickets = useQuery(api.events.getUserTickets, {
-    userId: user?.id ?? "",
-  });
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
+  
+  const tickets = useQuery(
+    api.events.getUserTickets, 
+    user?.id ? { userId: user.id } : "skip"
+  );
+
+  // Set a timeout for loading state
+  useEffect(() => {
+    if (user?.id && tickets === undefined) {
+      const timer = setTimeout(() => {
+        setLoadingTimeout(true);
+      }, 10000); // 10 seconds timeout
+      
+      return () => clearTimeout(timer);
+    }
+  }, [user?.id, tickets]);
 
   // Debug logging
-  console.log("Tickets query result:", { tickets, user: user?.id });
+  console.log("Tickets query result:", { tickets, user: user?.id, isSignedIn: !!user });
 
   // Show loading state while data is being fetched
   if (!user) {
@@ -21,8 +36,15 @@ export default function MyTicketsPage() {
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
           <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Please sign in to view your tickets</p>
+            <Ticket className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Sign in required</h3>
+            <p className="text-gray-600 mb-4">Please sign in to view your tickets</p>
+            <a 
+              href="/sign-in" 
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+            >
+              Sign In
+            </a>
           </div>
         </div>
       </div>
@@ -30,12 +52,34 @@ export default function MyTicketsPage() {
   }
 
   if (tickets === undefined) {
+    if (loadingTimeout) {
+      return (
+        <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center py-12">
+              <Ticket className="w-12 h-12 text-red-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Loading timeout</h3>
+              <p className="text-gray-600 mb-4">Unable to load tickets. This might be a temporary issue.</p>
+              <p className="text-xs text-gray-400 mb-4">User ID: {user?.id || 'Not available'}</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
     return (
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
           <div className="text-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
             <p className="text-gray-600">Loading your tickets...</p>
+            <p className="text-xs text-gray-400 mt-2">User ID: {user?.id || 'Not available'}</p>
           </div>
         </div>
       </div>
