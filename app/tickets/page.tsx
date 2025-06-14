@@ -12,7 +12,35 @@ export default function MyTicketsPage() {
     userId: user?.id ?? "",
   });
 
-  if (!tickets) return null;
+  // Debug logging
+  console.log("Tickets query result:", { tickets, user: user?.id });
+
+  // Show loading state while data is being fetched
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Please sign in to view your tickets</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (tickets === undefined) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading your tickets...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const validTickets = tickets.filter((t) => t.status === "valid");
   const otherTickets = tickets.filter((t) => t.status !== "valid");

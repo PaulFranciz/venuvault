@@ -32,26 +32,26 @@ export async function withCache<T>(
   if (options.bypassCache) {
     const data = await fetchFn();
     
-    // Update cache with fresh data
-    await redis.set(key, JSON.stringify(data), options.ttl ? { ex: options.ttl } : undefined);
+    // Update cache with fresh data (Redis client handles JSON.stringify internally)
+    await redis.set(key, data, options.ttl ? { ex: options.ttl } : undefined);
     
     return data;
   }
 
   try {
-    // Try to get data from cache
+    // Try to get data from cache (Redis client handles JSON.parse internally)
     const cachedData = await redis.get(key);
     
-    if (cachedData) {
-      // Cache hit
-      return JSON.parse(cachedData) as T;
+    if (cachedData !== null) {
+      // Cache hit - data is already parsed by Redis client
+      return cachedData as T;
     }
     
     // Cache miss - fetch fresh data
     const data = await fetchFn();
     
-    // Store in cache
-    await redis.set(key, JSON.stringify(data), options.ttl ? { ex: options.ttl } : undefined);
+    // Store in cache (Redis client handles JSON.stringify internally)
+    await redis.set(key, data, options.ttl ? { ex: options.ttl } : undefined);
     
     return data;
   } catch (error) {
