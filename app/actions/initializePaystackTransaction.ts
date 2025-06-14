@@ -31,7 +31,7 @@ interface TicketRecipient {
 export type PaystackMetadata = {
   eventId: Id<"events">;
   userId: string;
-  waitingListId: Id<"waitingList">;
+  waitingListId: Id<"waitingList"> | null;
   cancel_action: string;
   tickets: Array<{ ticketTypeId: string; quantity: number }>;
   discountCode?: string;
@@ -72,22 +72,25 @@ export async function initializePaystackTransaction({
   const user = await convex.query(api.users.getUserById, { userId });
   if (!user) throw new Error("User not found");
 
-  // Check waiting list status
+  // Check waiting list status OR reservation status
   const queuePosition = await convex.query(api.waitingList.getQueuePosition, {
     eventId,
     userId,
   });
 
-  if (!queuePosition || queuePosition.status !== WAITING_LIST_STATUS.OFFERED) {
-    throw new Error(
-      queuePosition?.status === WAITING_LIST_STATUS.WAITING
-        ? "Ticket not offered yet. You are on the waiting list."
-        : "No valid ticket offer found or offer expired."
-    );
+  // For traditional waiting list flow
+  if (queuePosition && queuePosition.status === WAITING_LIST_STATUS.OFFERED) {
+    if (!queuePosition.offerExpiresAt || queuePosition.offerExpiresAt < Date.now()) {
+      throw new Error("Ticket offer has expired.");
+    }
+  } 
+  // For new modal reservation flow - if no queue position exists, allow direct purchase
+  // This supports the new high-performance modal system that bypasses traditional queue
+  else if (queuePosition && queuePosition.status === WAITING_LIST_STATUS.WAITING) {
+    throw new Error("Ticket not offered yet. You are on the waiting list.");
   }
-  if (!queuePosition.offerExpiresAt || queuePosition.offerExpiresAt < Date.now()) {
-    throw new Error("Ticket offer has expired.");
-  }
+  // If no queue position exists at all, this might be a direct reservation
+  // We'll validate the tickets are still available below
 
   if (!Array.isArray(tickets) || tickets.length === 0) {
     throw new Error("No tickets provided");
@@ -117,7 +120,7 @@ export async function initializePaystackTransaction({
         // Use a string path to avoid TypeScript errors with the API structure
         "orders:createFreeTicketOrder" as any, {
         eventId,
-        waitingListId: queuePosition._id,
+        waitingListId: queuePosition?._id || null,
         tickets,
         customerInfo: customerInfo ? {
           name: customerInfo.name,
@@ -203,7 +206,7 @@ export async function initializePaystackTransaction({
   const metadata: PaystackMetadata = {
     eventId,
     userId,
-    waitingListId: queuePosition._id,
+    waitingListId: queuePosition?._id || null,
     cancel_action: cancelUrl,
     tickets,
     discountCode,
