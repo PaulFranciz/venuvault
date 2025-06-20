@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import Image from "next/image";
+import { useState, useEffect } from "react";
 import { Id } from "@/convex/_generated/dataModel";
 import { useEvent } from "@/hooks/queries/useEventQueries";
 import HighPerformancePurchaseTicket from "@/components/HighPerformancePurchaseTicket";
@@ -10,6 +11,22 @@ import { LoaderCircle } from "lucide-react";
 export default function HighPerformanceEventPage() {
   const params = useParams();
   const eventId = params.id as string;
+  
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  // Check if we're on desktop
+  useEffect(() => {
+    const checkIfDesktop = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+    
+    checkIfDesktop();
+    window.addEventListener('resize', checkIfDesktop);
+    
+    return () => window.removeEventListener('resize', checkIfDesktop);
+  }, []);
   
   // Use enhanced caching hook to fetch event details
   const { data: event, isLoading, error } = useEvent(eventId as Id<"events">, {
@@ -74,11 +91,18 @@ export default function HighPerformanceEventPage() {
         <div>
           <h2 className="text-xl font-bold mb-4">Get Tickets</h2>
           
-          {/* Use our high-performance component */}
-          <HighPerformancePurchaseTicket 
-            eventId={eventId as Id<"events">} 
-            ticketTypeId={event.ticketTypes?.[0]?.id}
-          />
+          {/* Button to open ticket modal */}
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="w-full py-3 px-4 bg-[#F96521] hover:bg-[#e55511] text-white font-semibold rounded-lg transition-all duration-200"
+          >
+            {event?.ticketTypes && event.ticketTypes.length > 1 
+              ? "VIEW TICKETS" 
+              : event?.isFreeEvent 
+                ? "GET TICKET" 
+                : "BUY NOW"
+            }
+          </button>
           
           <div className="mt-6 text-sm text-gray-500">
             <p>
@@ -88,6 +112,15 @@ export default function HighPerformanceEventPage() {
           </div>
         </div>
       </div>
+      
+      {/* High Performance Purchase Ticket Modal */}
+      <HighPerformancePurchaseTicket
+        eventId={eventId as Id<"events">}
+        ticketTypeId={event?.ticketTypes && event.ticketTypes.length > 0 ? event.ticketTypes[0].id : undefined}
+        isModalOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        isDesktop={isDesktop}
+      />
     </div>
   );
 }

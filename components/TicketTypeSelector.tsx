@@ -27,7 +27,6 @@ interface TicketTypeSelectorProps {
   ticketTypes: TicketType[];
   defaultPrice?: number | string;
   onTicketSelect: (ticketTypeId: string, quantity: number) => void;
-  onPurchase: (ticketTypeId: string, quantity: number) => void;
   availability?: any; // Replace with proper type when available
 }
 
@@ -35,7 +34,6 @@ export default function TicketTypeSelector({
   ticketTypes = [], 
   defaultPrice = 0,
   onTicketSelect,
-  onPurchase,
   availability 
 }: TicketTypeSelectorProps) {
   const [selectedType, setSelectedType] = useState<string | null>(
